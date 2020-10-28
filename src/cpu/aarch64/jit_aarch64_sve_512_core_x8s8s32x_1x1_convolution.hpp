@@ -53,7 +53,8 @@ namespace cpu {
 namespace aarch64 {
 
 template <impl::data_type_t src_type, impl::data_type_t dst_type>
-struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitive_t {
+struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
+    : public primitive_t {
     struct pd_t : public cpu_convolution_fwd_pd_t {
         using dw_conv_pd_type = cpu_convolution_fwd_pd_t;
         pd_t(const convolution_desc_t *adesc, const primitive_attr_t *attr,
@@ -67,9 +68,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
             if (copy(other) != status::success) is_initialized_ = false;
         }
 
-        DECLARE_COMMON_PD_T(JIT_IMPL_NAME_HELPER("jit_int8_1x1:",
-                                    sve,
-                                    ""),
+        DECLARE_COMMON_PD_T(JIT_IMPL_NAME_HELPER("jit_int8_1x1:", sve, ""),
                 jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t);
 
         status_t init(engine_t *engine) {
@@ -95,9 +94,10 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
             rtus_prepare(this, conv_d, src_d, dst_md());
 
             status_t status
-                    = jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_conf(jcp_,
-                            *conv_d, src_d, weights_md_, dst_md_, bias_md_,
-                            *attr(), dnnl_get_max_threads(), rtus_.reduce_src_);
+                    = jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::
+                            init_conf(jcp_, *conv_d, src_d, weights_md_,
+                                    dst_md_, bias_md_, *attr(),
+                                    dnnl_get_max_threads(), rtus_.reduce_src_);
             if (status != status::success) return status;
 
 #if 0
@@ -117,7 +117,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
         }
 
         const memory_desc_t *dst_md(int index = 0) const override {
- //           return jcp_.with_dw_conv ? dw_conv_pd_->dst_md(index) : &dst_md_;
+            //           return jcp_.with_dw_conv ? dw_conv_pd_->dst_md(index) : &dst_md_;
             return &dst_md_;
         }
 
@@ -134,7 +134,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
                     default: break;
                 }
 #endif
-	    }
+            }
             return convolution_fwd_pd_t::arg_md(index);
         }
 
@@ -150,10 +150,10 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
         jit_1x1_conv_conf_t jcp_;
         reduce_to_unit_stride_t rtus_;
         jit_conv_conf_t *jcp_dw_; // doesn't own a resource
-//        std::unique_ptr<cpu_convolution_fwd_pd_t> dw_conv_pd_;
-//        template <data_type_t sdt, data_type_t ddt>
-//        using dw_pd_t = typename jit_avx512_core_x8s8s32x_convolution_fwd_t<sdt,
-//                ddt>::pd_t;
+        //        std::unique_ptr<cpu_convolution_fwd_pd_t> dw_conv_pd_;
+        //        template <data_type_t sdt, data_type_t ddt>
+        //        using dw_pd_t = typename jit_avx512_core_x8s8s32x_convolution_fwd_t<sdt,
+        //                ddt>::pd_t;
 
     protected:
         format_tag_t dat_tag() const {
@@ -165,7 +165,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
             jcp_ = other.jcp_;
             rtus_ = other.rtus_;
             jcp_dw_ = nullptr;
-#if  0
+#if 0
             if (other.dw_conv_pd_) {
                 dw_conv_pd_.reset(static_cast<cpu_convolution_fwd_pd_t *>(
                         other.dw_conv_pd_->clone()));
@@ -330,8 +330,8 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
                 pd()->jcp_, *pd()->attr());
 
         if (pd()->jcp_.with_dw_conv) {
-//            kernel_dw_ = new dw_conv_kernel_t(
-//                    *(pd()->jcp_dw_), *(pd()->dw_conv_pd_->attr()));
+            //            kernel_dw_ = new dw_conv_kernel_t(
+            //                    *(pd()->jcp_dw_), *(pd()->dw_conv_pd_->attr()));
         }
 
         init_rtus_driver<sve>(this);
@@ -339,7 +339,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t : public primitiv
 
     ~jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t() {
         delete kernel_;
- //       if (kernel_dw_) { delete kernel_dw_; }
+        //       if (kernel_dw_) { delete kernel_dw_; }
         delete rtus_driver_;
     }
 
@@ -364,8 +364,8 @@ private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
     jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel *kernel_;
     rtus_driver_t<sve> *rtus_driver_;
-//    using dw_conv_kernel_t = jit_aarch64_sve_512_core_x8s8s32x_fwd_kernel;
-//    dw_conv_kernel_t *kernel_dw_ = nullptr;
+    //    using dw_conv_kernel_t = jit_aarch64_sve_512_core_x8s8s32x_fwd_kernel;
+    //    dw_conv_kernel_t *kernel_dw_ = nullptr;
 };
 
 } // namespace aarch64

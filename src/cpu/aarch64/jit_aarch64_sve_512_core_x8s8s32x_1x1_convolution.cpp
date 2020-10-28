@@ -64,7 +64,7 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
     auto scratchpad = ctx.get_scratchpad_grantor();
 
     if (pd()->jcp_.with_dw_conv) {
-//        auto jcp_dw = pd()->jcp_dw_;
+        //        auto jcp_dw = pd()->jcp_dw_;
     }
     parallel(pd()->jcp_.nthr, [&](const int ithr, const int nthr) {
         execute_forward_thr(ithr, nthr, src, weights, bias, weights_dw, bias_dw,
@@ -94,7 +94,7 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
             ? scratchpad.get<src_data_t>(key_conv_rtus_space)
             : NULL;
 
-//    auto local_scales = scratchpad.get<float>(key_conv_adjusted_scales);
+    //    auto local_scales = scratchpad.get<float>(key_conv_adjusted_scales);
 
     const int work_amount = jcp.mb * jcp.ngroups * jcp.nb_bcast;
 
@@ -130,18 +130,18 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
             : jcp.nb_load_blocking_max;
 
     // Begin: declare Variables needed for dw conv.
-//    const auto jcp_dw = pd()->jcp_dw_;
-//    const auto &dw_pd = pd()->dw_conv_pd_;
+    //    const auto jcp_dw = pd()->jcp_dw_;
+    //    const auto &dw_pd = pd()->dw_conv_pd_;
     memory_tracking::grantor_t dw_scratchpad(
             scratchpad, memory_tracking::names::prefix_fusion);
 
-//    const size_t dw_bia_dt_size = jcp_dw && jcp_dw->with_bias
-//            ? types::data_type_size(dw_pd->desc()->bias_desc.data_type)
-//            : 0;
-//    const size_t dw_bia_dt_size = 0;
+    //    const size_t dw_bia_dt_size = jcp_dw && jcp_dw->with_bias
+    //            ? types::data_type_size(dw_pd->desc()->bias_desc.data_type)
+    //            : 0;
+    //    const size_t dw_bia_dt_size = 0;
 
-//    float *dw_oscales {nullptr};
-//    int32_t *compensation_dw {nullptr};
+    //    float *dw_oscales {nullptr};
+    //    int32_t *compensation_dw {nullptr};
     if (jcp.with_dw_conv) {
 #if 0
         offset = dw_weights_d.size() - dw_weights_d.additional_buffer_size();
@@ -153,9 +153,9 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
 #endif
     }
 
-//    dst_data_t *pbuf {nullptr};
-//    size_t row_offset {};
-//    const int nb_buffer = jcp.nb_load_blocking;
+    //    dst_data_t *pbuf {nullptr};
+    //    size_t row_offset {};
+    //    const int nb_buffer = jcp.nb_load_blocking;
     std::vector<dst_data_t *> addrs;
     // End
 
@@ -216,10 +216,10 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
                 : is_2d ? dst_d.blk_off(n, _ocb * jcp.oc_block, oh, ow)
                         : dst_d.blk_off(n, _ocb * jcp.oc_block, ow);
 
-//        p.output_data = jcp.with_dw_conv ? pbuf + (oh % jcp_dw->kh) * row_offset
-//                                         : &dst[dst_off];
+        //        p.output_data = jcp.with_dw_conv ? pbuf + (oh % jcp_dw->kh) * row_offset
+        //                                         : &dst[dst_off];
         p.output_data = &dst[dst_off];
-	p.load_data
+        p.load_data
                 = &weights[pd()->with_groups() ? weights_d.blk_off(g, ocb, icb)
                                                : weights_d.blk_off(ocb, icb)];
         p.bias_data = &bias[_ocb * jcp.oc_block * bia_dt_size];
@@ -420,7 +420,7 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
 #endif
 
     if (jcp.with_dw_conv) {
-//        conv_dw();
+        //        conv_dw();
     } else {
         int bcast_start {0}, bcast_end {0}, ocb_start {0}, ocb_end {0};
         balance2D(nthr, ithr, work_amount, bcast_start, bcast_end,
@@ -439,10 +439,14 @@ template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, u8>;
 template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, u8>;
 template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, s8>;
 template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, s8>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, s32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, s32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, f32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, f32>;
+template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8,
+        s32>;
+template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8,
+        s32>;
+template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8,
+        f32>;
+template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8,
+        f32>;
 
 } // namespace aarch64
 } // namespace cpu

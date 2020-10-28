@@ -52,8 +52,8 @@ using namespace dnnl::impl::cpu::x64;
 
 #elif DNNL_AARCH64
 #include "cpu/aarch64/jit_aarch64_sve_512_1x1_convolution.hpp"
-#include "cpu/aarch64/jit_uni_dw_convolution.hpp"
 #include "cpu/aarch64/jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution.hpp"
+#include "cpu/aarch64/jit_uni_dw_convolution.hpp"
 using namespace dnnl::impl::cpu::aarch64;
 #endif
 

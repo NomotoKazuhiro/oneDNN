@@ -40,9 +40,9 @@
 #include "cpu/aarch64/jit_primitive_conf.hpp"
 //#include "cpu/aarch64/jit_uni_eltwise_injector.hpp"
 
-#define ADDMAX  4095
+#define ADDMAX 4095
 #define MOVMAX 65535
-#define LDRMAX   255
+#define LDRMAX 255
 
 namespace dnnl {
 namespace impl {
@@ -53,24 +53,26 @@ namespace aarch64 {
 namespace xa = Xbyak::Xbyak_aarch64;
 
 template <typename Vmm>
-struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel : public jit_generator {
-    DECLARE_CPU_JIT_AUX_FUNCTIONS(_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_fwd_ker_t)
+struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel
+    : public jit_generator {
+    DECLARE_CPU_JIT_AUX_FUNCTIONS(
+            _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_fwd_ker_t)
     _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel(
             const jit_1x1_conv_conf_t &ajcp, const primitive_attr_t &attr)
-//        : jcp(ajcp), attr_(attr), eltwise_injector_(nullptr) {
-          : jcp(ajcp), attr_(attr) {        
+        //        : jcp(ajcp), attr_(attr), eltwise_injector_(nullptr) {
+        : jcp(ajcp), attr_(attr) {
         if (jcp.with_eltwise) {
 #if 0
             eltwise_injector_ = new jit_uni_eltwise_injector_f32<sve>(
                     this, jcp.eltwise);
 #endif
-	}
+        }
         this->generate();
         jit_ker = (void (*)(jit_1x1_conv_call_s *))this->getCode32();
     }
 
-//    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() { delete eltwise_injector_; }
-   ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {}
+    //    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() { delete eltwise_injector_; }
+    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {}
 
     bool maybe_eltwise(int position);
     jit_1x1_conv_conf_t jcp;
@@ -78,12 +80,11 @@ struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel : public jit_generator
     void (*jit_ker)(jit_1x1_conv_call_s *);
 
 private:
-//    jit_uni_eltwise_injector_f32<sve> *eltwise_injector_;
+    //    jit_uni_eltwise_injector_f32<sve> *eltwise_injector_;
 
     using reg64_t = const xa::XReg;
     using zmm_t = const xa::ZReg;
     using mask_t = const xa::PReg;
-
 
     /* register mapping */
     const xa::XReg reg_last_load = x8;
@@ -158,14 +159,14 @@ private:
         if (EVEX_max_8b_offt <= offt && offt < 3 * EVEX_max_8b_offt) {
             offt = offt - 2 * EVEX_max_8b_offt;
             scale = 1;
-        } else if (3 * EVEX_max_8b_offt <= offt && offt < 5 * EVEX_max_8b_offt) {
+        } else if (3 * EVEX_max_8b_offt <= offt
+                && offt < 5 * EVEX_max_8b_offt) {
             offt = offt - 4 * EVEX_max_8b_offt;
             scale = 2;
         }
 
         auto re = offt;
-        if (scale)
-            re = re + (2 * EVEX_max_8b_offt) * scale;
+        if (scale) re = re + (2 * EVEX_max_8b_offt) * scale;
 
         return re;
     }
@@ -173,7 +174,7 @@ private:
     xa::XReg get_comp_addr_reg(xa::XReg base, int offset = 0) {
         auto offt = get_offset(offset);
 
-        if(offt == 0) return base;
+        if (offt == 0) return base;
 
         auto reg_tmp_adr = reg_tmp0_adr;
         auto reg_tmp_imm = reg_tmp0_imm;
@@ -193,18 +194,21 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel {
         int ch_block = ajcp.ic_block;
         switch (ch_block) {
             case 16:
-                zmm_kernel_ = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                        Xbyak::Zmm>(ajcp, attr);
+                zmm_kernel_
+                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
+                                Xbyak::Zmm>(ajcp, attr);
                 jit_ker = zmm_kernel_->jit_ker;
                 return;
             case 8:
-                ymm_kernel_ = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                        Xbyak::Ymm>(ajcp, attr);
+                ymm_kernel_
+                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
+                                Xbyak::Ymm>(ajcp, attr);
                 jit_ker = ymm_kernel_->jit_ker;
                 return;
             case 4:
-                xmm_kernel_ = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                        Xbyak::Xmm>(ajcp, attr);
+                xmm_kernel_
+                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
+                                Xbyak::Xmm>(ajcp, attr);
                 jit_ker = xmm_kernel_->jit_ker;
                 return;
             default: assert(!"invalid channel blocking");
@@ -235,7 +239,8 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel {
     _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm> *xmm_kernel_;
 
 private:
-    DNNL_DISALLOW_COPY_AND_ASSIGN(jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel);
+    DNNL_DISALLOW_COPY_AND_ASSIGN(
+            jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel);
 };
 
 } // namespace aarch64
