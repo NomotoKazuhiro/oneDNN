@@ -390,8 +390,8 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
             }
         }
 
-        //        if (maybe_eltwise(0))
-        //            eltwise_injector_->compute_vector_range(0, ur * load_loop_blk);
+        if (maybe_eltwise(0))
+            eltwise_injector_->compute_vector_range(0, ur * load_loop_blk);
 
         if (p_sum_scale) { // post_op: sum
             for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
@@ -470,8 +470,8 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
             }
         }
 
-        //        if (maybe_eltwise(1))
-        //            eltwise_injector_->compute_vector_range(0, ur * load_loop_blk);
+        if (maybe_eltwise(1))
+            eltwise_injector_->compute_vector_range(0, ur * load_loop_blk);
 
         // Properly saturate the accumulators for integer datatypes
         if (one_of(jcp.dst_dt, u8, s8, s32)) {
@@ -892,7 +892,12 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
 
     postamble();
 
-    //    if (jcp.with_eltwise) eltwise_injector_->prepare_table();
+    if (jcp.with_eltwise) {
+        eltwise_injector_->prepare_table();
+#ifdef DNNL_INDIRECT_JIT_AARCH64
+        binCommit();
+#endif
+    }
 }
 
 bool jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::post_ops_ok(
@@ -997,7 +1002,11 @@ status_t jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_conf(
     // handled in depthwise convolution.
     const int eltwise_ind = p.find(primitive_kind::eltwise, 0, dw_conv_ind);
     jcp.with_eltwise = eltwise_ind != -1;
-    if (jcp.with_eltwise) jcp.eltwise = p.entry_[eltwise_ind].eltwise;
+    if (jcp.with_eltwise) {
+        jcp.eltwise = p.entry_[eltwise_ind].eltwise;
+        if (jcp.eltwise.alg == alg_kind::eltwise_pow)
+            return status::unimplemented;
+    }
 
     format_tag_t dat_tag = utils::pick(
             ndims - 3, format_tag::nwc, format_tag::nhwc, format_tag::ndhwc);

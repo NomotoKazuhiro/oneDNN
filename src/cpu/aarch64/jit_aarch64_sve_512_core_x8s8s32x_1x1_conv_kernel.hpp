@@ -38,7 +38,7 @@
 
 #include "cpu/aarch64/jit_generator.hpp"
 #include "cpu/aarch64/jit_primitive_conf.hpp"
-//#include "cpu/aarch64/jit_uni_eltwise_injector.hpp"
+#include "cpu/aarch64/jit_uni_eltwise_injector.hpp"
 
 #define ADDMAX 4095
 #define MOVMAX 65535
@@ -59,20 +59,22 @@ struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel
             _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_fwd_ker_t)
     _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel(
             const jit_1x1_conv_conf_t &ajcp, const primitive_attr_t &attr)
-        //        : jcp(ajcp), attr_(attr), eltwise_injector_(nullptr) {
-        : jcp(ajcp), attr_(attr) {
+        : jit_generator(nullptr, 1024 * 1024)
+        , jcp(ajcp)
+        , attr_(attr)
+        , eltwise_injector_(nullptr) {
         if (jcp.with_eltwise) {
-#if 0
-            eltwise_injector_ = new jit_uni_eltwise_injector_f32<sve>(
+            eltwise_injector_ = new jit_uni_eltwise_injector_f32<avx512_core>(
                     this, jcp.eltwise);
-#endif
         }
+
         this->generate();
         jit_ker = (void (*)(jit_1x1_conv_call_s *))this->getCode32();
     }
 
-    //    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() { delete eltwise_injector_; }
-    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {}
+    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {
+        delete eltwise_injector_;
+    }
 
     bool maybe_eltwise(int position);
     jit_1x1_conv_conf_t jcp;
@@ -80,7 +82,7 @@ struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel
     void (*jit_ker)(jit_1x1_conv_call_s *);
 
 private:
-    //    jit_uni_eltwise_injector_f32<sve> *eltwise_injector_;
+    jit_uni_eltwise_injector_f32<avx512_core> *eltwise_injector_;
 
     using reg64_t = const xa::XReg;
     using zmm_t = const xa::ZReg;
