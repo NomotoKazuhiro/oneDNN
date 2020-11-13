@@ -325,7 +325,7 @@ struct rtus_driver_t : public jit_generator {
 
         auto load_reg = [=](const Xmm &vreg, const Reg64 &reg,
                                 const int64_t offset, const int load_size) {
-            if (isa == avx512_common) {
+            if (isa == avx512_common || isa == sve) {
                 const Address &addr = ptr[reg + offset];
                 switch (typesize_) {
                     case 4: vmovups(vreg, addr); break;
@@ -344,7 +344,7 @@ struct rtus_driver_t : public jit_generator {
 
         auto store_reg = [=](const Reg64 &reg, const Xmm &vreg,
                                  const int64_t offset, const int store_size) {
-            if (isa == avx512_common) {
+            if (isa == avx512_common || isa == sve) {
                 const Address &addr = ptr[reg + offset];
                 switch (typesize_) {
                     case 4: vmovups(addr, vreg); break;
