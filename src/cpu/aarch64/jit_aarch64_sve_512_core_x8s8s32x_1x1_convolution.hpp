@@ -45,6 +45,7 @@
 #include "cpu/platform.hpp"
 
 #include "cpu/aarch64/jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel.hpp"
+#include "cpu/aarch64/jit_aarch64_sve_512_x8s8s32x_convolution.hpp"
 #include "cpu/aarch64/jit_uni_1x1_conv_utils.hpp"
 
 namespace dnnl {
@@ -100,12 +101,10 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
                                     dnnl_get_max_threads(), rtus_.reduce_src_);
             if (status != status::success) return status;
 
-#if 0
             if (jcp_.with_dw_conv) {
                 status = depthwise_po_init(engine);
                 if (status != status::success) return status;
             }
-#endif
 
             auto scratchpad = scratchpad_registry().registrar();
             jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_scratchpad(
@@ -117,15 +116,12 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
         }
 
         const memory_desc_t *dst_md(int index = 0) const override {
-            //           return jcp_.with_dw_conv ? dw_conv_pd_->dst_md(index) : &dst_md_;
+            return jcp_.with_dw_conv ? dw_conv_pd_->dst_md(index) : &dst_md_;
             return &dst_md_;
         }
 
         const memory_desc_t *arg_md(int index = 0) const override {
             if (jcp_.with_dw_conv) {
-#if 1
-                assert(NULL);
-#else
                 switch (index) {
                     case DNNL_ARG_ATTR_POST_OP_DW | DNNL_ARG_WEIGHTS:
                         return dw_conv_pd_->weights_md(0);
@@ -133,7 +129,6 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
                         return dw_conv_pd_->weights_md(1);
                     default: break;
                 }
-#endif
             }
             return convolution_fwd_pd_t::arg_md(index);
         }
@@ -150,10 +145,11 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
         jit_1x1_conv_conf_t jcp_;
         reduce_to_unit_stride_t rtus_;
         jit_conv_conf_t *jcp_dw_; // doesn't own a resource
-        //        std::unique_ptr<cpu_convolution_fwd_pd_t> dw_conv_pd_;
-        //        template <data_type_t sdt, data_type_t ddt>
-        //        using dw_pd_t = typename jit_avx512_core_x8s8s32x_convolution_fwd_t<sdt,
-        //                ddt>::pd_t;
+        std::unique_ptr<cpu_convolution_fwd_pd_t> dw_conv_pd_;
+        template <data_type_t sdt, data_type_t ddt>
+        using dw_pd_t =
+                typename jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<sdt,
+                        ddt>::pd_t;
 
     protected:
         format_tag_t dat_tag() const {
@@ -165,7 +161,6 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
             jcp_ = other.jcp_;
             rtus_ = other.rtus_;
             jcp_dw_ = nullptr;
-#if 0
             if (other.dw_conv_pd_) {
                 dw_conv_pd_.reset(static_cast<cpu_convolution_fwd_pd_t *>(
                         other.dw_conv_pd_->clone()));
@@ -199,11 +194,9 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
 
 #undef CASE
             }
-#endif
             return status::success;
         }
 
-#if 0
         status_t depthwise_po_init(engine_t *engine) {
             using namespace memory_tracking;
             auto &jcp_1x1 = jcp_;
@@ -225,8 +218,9 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
             // for dw: Always fuse with same ISA.
             // Caveat: May be a better dw conv exists.
 
-            bool ok = !mayiuse(aarch64_sve_512_core_bf16_amx_int8)
-                    && (attr_1x1.post_ops_.find(primitive_kind::sum) == -1)
+            //            bool ok = !mayiuse(aarch64_sve_512_core_bf16_amx_int8)
+            //                    && (attr_1x1.post_ops_.find(primitive_kind::sum) == -1)
+            bool ok = (attr_1x1.post_ops_.find(primitive_kind::sum) == -1)
                     // TODO: Below may be further tuned.
                     && (l2_cache < src_d.size())
                     // load_grp_count check can be redundant due to l2 check
@@ -319,7 +313,6 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
                     dw_scratchpad, *jcp_dw_, *(dw_conv_pd_->attr()));
             return status::success;
         }
-#endif
     };
     template <cpu_isa_t isa, typename conv_t>
     friend void init_rtus_driver(conv_t *self);
@@ -330,8 +323,8 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
                 pd()->jcp_, *pd()->attr());
 
         if (pd()->jcp_.with_dw_conv) {
-            //            kernel_dw_ = new dw_conv_kernel_t(
-            //                    *(pd()->jcp_dw_), *(pd()->dw_conv_pd_->attr()));
+            kernel_dw_ = new dw_conv_kernel_t(
+                    *(pd()->jcp_dw_), *(pd()->dw_conv_pd_->attr()));
         }
 
         init_rtus_driver<sve>(this);
@@ -339,7 +332,7 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t
 
     ~jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t() {
         delete kernel_;
-        //       if (kernel_dw_) { delete kernel_dw_; }
+        if (kernel_dw_) { delete kernel_dw_; }
         delete rtus_driver_;
     }
 
@@ -364,8 +357,8 @@ private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
     jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel *kernel_;
     rtus_driver_t<sve> *rtus_driver_;
-    //    using dw_conv_kernel_t = jit_aarch64_sve_512_core_x8s8s32x_fwd_kernel;
-    //    dw_conv_kernel_t *kernel_dw_ = nullptr;
+    using dw_conv_kernel_t = jit_aarch64_sve_512_x8s8s32x_fwd_kernel;
+    dw_conv_kernel_t *kernel_dw_ = nullptr;
 };
 
 } // namespace aarch64

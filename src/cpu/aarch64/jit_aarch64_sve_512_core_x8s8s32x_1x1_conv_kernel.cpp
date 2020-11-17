@@ -281,10 +281,9 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
 
     auto output_ptr = [=](xa::ZReg output_reg, int i_load, int i_ur,
                               bool mask_flag) {
-        //        const size_t ur_stride = jcp.with_dw_conv
-        //                ? jcp.nb_load_blocking * jcp.oc_block * i_ur
-        //                : jcp.oc_without_padding * jcp.ngroups * i_ur;
-        const size_t ur_stride = jcp.oc_without_padding * jcp.ngroups * i_ur;
+        const size_t ur_stride = jcp.with_dw_conv
+                ? jcp.nb_load_blocking * jcp.oc_block * i_ur
+                : jcp.oc_without_padding * jcp.ngroups * i_ur;
 
         int offt = get_offset(
                 jcp.typesize_out * (ur_stride + i_load * jcp.load_block));
@@ -299,10 +298,9 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
 
     auto output_ptr8 = [=](xa::ZReg output_reg, int i_load, int i_ur,
                                bool mask_flag) {
-        //        const size_t ur_stride = jcp.with_dw_conv
-        //                ? jcp.nb_load_blocking * jcp.oc_block * i_ur
-        //                : jcp.oc_without_padding * jcp.ngroups * i_ur;
-        const size_t ur_stride = jcp.oc_without_padding * jcp.ngroups * i_ur;
+        const size_t ur_stride = jcp.with_dw_conv
+                ? jcp.nb_load_blocking * jcp.oc_block * i_ur
+                : jcp.oc_without_padding * jcp.ngroups * i_ur;
 
         int offt = get_offset(
                 jcp.typesize_out * (ur_stride + i_load * jcp.load_block));
