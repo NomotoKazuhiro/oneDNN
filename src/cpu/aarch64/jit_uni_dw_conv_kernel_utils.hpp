@@ -26,9 +26,7 @@
 
 #include "cpu/aarch64/jit_generator.hpp"
 #include "cpu/aarch64/jit_primitive_conf.hpp"
-#if 0
 #include "cpu/aarch64/jit_uni_eltwise_injector.hpp"
-#endif
 
 #include "cpu/aarch64/jit_uni_dw_conv_kernel_f32.hpp"
 
@@ -100,13 +98,11 @@ status_t jit_uni_dw_conv_fwd_kernel<isa, kernel_dt>::init_conf(
     // Currently this kernel only supports 2D convolutions.
     if (ndims != 4) return status::unimplemented;
 
-    const auto blocked_tag
-            = isa == sve ? nChw16c : nChw8c;
-    const auto wei_tag
-            = isa == sve ? Goihw16g : Goihw8g;
+    const auto blocked_tag = isa == sve ? nChw16c : nChw8c;
+    const auto wei_tag = isa == sve ? Goihw16g : Goihw8g;
     const auto nxc_tag = nhwc;
     jcp.with_bias = cd.bias_desc.format_kind != format_kind::undef;
-    if( (blocked_tag != nChw16c) || (wei_tag != Goihw16g))
+    if ((blocked_tag != nChw16c) || (wei_tag != Goihw16g))
         return status::unimplemented;
 
     if (src_d.format_kind() == format_kind::any) {
@@ -139,15 +135,13 @@ status_t jit_uni_dw_conv_fwd_kernel<isa, kernel_dt>::init_conf(
     const auto data_tag = jcp.src_tag;
     const bool is_data_layout_nxc = data_tag == nxc_tag;
 
-
     jcp.dst_dt = cd.dst_desc.data_type;
     jcp.isa = isa;
 
-    if (!mayiuse(isa))
-        return status::unimplemented;
+    if (!mayiuse(isa)) return status::unimplemented;
 
     const int simd_w = isa == sve ? 16 : 8;
-    if( simd_w != 16) return status::unimplemented;
+    if (simd_w != 16) return status::unimplemented;
 
     jcp.prop_kind = cd.prop_kind;
 
@@ -223,16 +217,10 @@ status_t jit_uni_dw_conv_fwd_kernel<isa, kernel_dt>::init_conf(
     jcp.with_sum = p.find(primitive_kind::sum) != -1;
     const int eltwise_ind = p.find(primitive_kind::eltwise);
     jcp.with_eltwise = eltwise_ind != -1;
-    if (jcp.with_eltwise){
-#if 1
-        return status::unimplemented;
-#else
-        jcp.eltwise = p.entry_[eltwise_ind].eltwise;
-#endif
-    }
+
+    if (jcp.with_eltwise) { jcp.eltwise = p.entry_[eltwise_ind].eltwise; }
     bool ok_to_pad_channels = true && jcp.oc == jcp.ngroups
-            && jcp.ic == jcp.ngroups
-            && isa == sve;
+            && jcp.ic == jcp.ngroups && isa == sve;
     if (ok_to_pad_channels) {
         jcp.oc = rnd_up(jcp.oc, simd_w);
         jcp.ic = rnd_up(jcp.oc, simd_w);
@@ -248,8 +236,7 @@ status_t jit_uni_dw_conv_fwd_kernel<isa, kernel_dt>::init_conf(
 
     jcp.ch_block = simd_w;
     jcp.nb_ch = jcp.oc / jcp.ch_block;
-    jcp.nb_ch_blocking
-            = isa == sve ? 4 : isa == avx2 ? 3 : 2;
+    jcp.nb_ch_blocking = isa == sve ? 4 : isa == avx2 ? 3 : 2;
     if (jcp.nb_ch < jcp.nb_ch_blocking) jcp.nb_ch_blocking = jcp.nb_ch;
 
     jcp.bia_dt = jcp.with_bias ? cd.bias_desc.data_type : data_type::undef;
@@ -305,8 +292,7 @@ status_t jit_uni_dw_conv_bwd_data_kernel<isa, kernel_dt>::init_conf(
     jcp.dsrc_dt = cd.diff_src_desc.data_type;
     jcp.isa = isa;
 
-    if (!mayiuse(isa))
-        return status::unimplemented;
+    if (!mayiuse(isa)) return status::unimplemented;
 
     const int simd_w = isa == sve ? 16 : 8;
 
@@ -338,13 +324,22 @@ status_t jit_uni_dw_conv_bwd_data_kernel<isa, kernel_dt>::init_conf(
 
     jcp.dilate_h = cd.dilates[0];
     jcp.dilate_w = cd.dilates[1];
+    int ext_kw = calculate_extended_filter_size(jcp.kw, jcp.dilate_w);
+    int ext_kh = calculate_extended_filter_size(jcp.kh, jcp.dilate_h);
+    jcp.r_pad = calculate_end_padding(
+            jcp.l_pad, jcp.ow, jcp.iw, jcp.stride_w, ext_kw);
+    jcp.b_pad = calculate_end_padding(
+            jcp.t_pad, jcp.oh, jcp.ih, jcp.stride_h, ext_kh);
+    bool kernel_outside_src = false || ext_kw <= jcp.l_pad
+            || ext_kw <= jcp.r_pad || ext_kh <= jcp.t_pad
+            || ext_kh <= jcp.b_pad;
+    if (kernel_outside_src) { return status::unimplemented; }
 
     jcp.ihp = jcp.ih + jcp.t_pad + jcp.b_pad;
     jcp.iwp = jcp.iw + jcp.l_pad + jcp.r_pad;
 
     bool ok_to_pad_channels = true && jcp.oc == jcp.ngroups
-            && jcp.ic == jcp.ngroups
-            && isa == sve;
+            && jcp.ic == jcp.ngroups && isa == sve;
     if (ok_to_pad_channels) {
         jcp.oc = rnd_up(jcp.oc, simd_w);
         jcp.ic = rnd_up(jcp.oc, simd_w);
@@ -359,11 +354,8 @@ status_t jit_uni_dw_conv_bwd_data_kernel<isa, kernel_dt>::init_conf(
     jcp.dst_tag = diff_dst_d.matches_one_of_tag(dat_tag);
 
     bool args_ok = true && jcp.oc == jcp.ngroups && jcp.ic == jcp.ngroups
-            && jcp.ngroups % simd_w == 0 && jcp.dilate_h == 0
-            && jcp.dilate_w == 0 && jcp.src_tag == dat_tag
+            && jcp.ngroups % simd_w == 0 && jcp.src_tag == dat_tag
             && jcp.wei_tag == wei_tag && jcp.dst_tag == dat_tag
-            && jcp.oh == (jcp.ihp - jcp.kh) / jcp.stride_h + 1
-            && jcp.ow == (jcp.iwp - jcp.kw) / jcp.stride_w + 1
             && jcp.ic <= diff_src_d.padded_dims()[1]
             && jcp.oc <= diff_dst_d.padded_dims()[1]
             && jcp.ngroups <= weights_d.padded_dims()[0];
@@ -376,8 +368,7 @@ status_t jit_uni_dw_conv_bwd_data_kernel<isa, kernel_dt>::init_conf(
 
     jcp.ch_block = simd_w;
     jcp.nb_ch = jcp.ic / jcp.ch_block;
-    jcp.nb_ch_blocking
-            = isa == sve ? 4 : isa == avx2 ? 3 : 2;
+    jcp.nb_ch_blocking = isa == sve ? 4 : isa == avx2 ? 3 : 2;
     if (jcp.nb_ch < jcp.nb_ch_blocking) jcp.nb_ch_blocking = jcp.nb_ch;
 
     return status::success;
@@ -429,10 +420,9 @@ status_t jit_uni_dw_conv_bwd_weights_kernel<isa, kernel_dt>::init_conf(
     using namespace dnnl::impl::utils;
 
     jcp.dwei_dt = cd.diff_weights_desc.data_type;
-    jcp.isa = sve;
-    
-    if (!mayiuse(isa))
-        return status::unimplemented;
+    jcp.isa = isa;
+
+    if (!mayiuse(isa)) return status::unimplemented;
 
     jcp.ngroups = diff_weights_d.dims()[0];
     jcp.oc = diff_dst_d.dims()[1] / jcp.ngroups;
@@ -441,10 +431,11 @@ status_t jit_uni_dw_conv_bwd_weights_kernel<isa, kernel_dt>::init_conf(
     const bool with_groups = diff_weights_d.ndims() == src_d.ndims() + 1;
 
     jcp.is_depthwise = true && with_groups && everyone_is(1, jcp.oc, jcp.ic);
-    
+
     if (!jcp.is_depthwise) return status::unimplemented;
 
     jcp.ch_block = isa == sve ? 16 : 8;
+    jcp.simd_w = jcp.ch_block;
 
     jcp.mb = src_d.dims()[0];
 

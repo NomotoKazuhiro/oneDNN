@@ -24,11 +24,11 @@
 #include "common/type_helpers.hpp"
 #include "common/utils.hpp"
 
+#include "cpu/aarch64/jit_generator.hpp"
 #include "cpu/cpu_batch_normalization_utils.hpp"
 #include "cpu/platform.hpp"
-#include "cpu/aarch64/jit_generator.hpp"
 
-#include "cpu/aarch64/jit_aarch64_sve_512_core_bf16cvt.hpp"
+#include "cpu/aarch64/jit_sve_512_core_bf16cvt.hpp"
 #include "cpu/aarch64/jit_uni_tbb_batch_normalization.hpp"
 
 namespace dnnl {
@@ -80,7 +80,6 @@ struct jit_bnorm_process_tail_t {
 
         Reg32 regw_tmp = reg_tmp_.cvt32();
         h->mov(regw_tmp, mask);
-        // The kmovw instrucion here can be translated correctly by translator
         h->kmovw(ktail_mask_, regw_tmp);
     }
 
@@ -197,8 +196,15 @@ struct jit_bnorm_process_relu_t {
         h->jmp(l_mask_after);
         h->align(32);
         h->L(l_relu_mask_avx2); /* [0x80 0x40 0x20 0x10 0x08 0x04 0x02 0x01] */
+
+#ifdef DNNL_X64_IMPLEMENTATION
         for (int i = 0; i < 8; ++i)
             h->dd(1 << i);
+#else //#ifdef DNNL_X64_IMPLEMENTATION
+        for (int i = 0; i < 8; ++i)
+            h->CodeArray::dd(1 << i);
+        h->binCommit();
+#endif //#ifdef DNNL_X64_IMPLEMENTATION
         h->L(l_mask_after);
     }
 
@@ -768,8 +774,7 @@ struct jit_bnorm_fwd_t : jit_generator {
         jit_tail_.prepare_tail();
 
         Label normal_store, end_store;
-        CodeGeneratorAArch64::tst(Xbyak::Xbyak_aarch64::XReg(reg_ptr_dst.getIdx()), vlen - 1);
-        CodeGeneratorAArch64::cmp(Xbyak::Xbyak_aarch64::XReg(reg_ptr_dst.getIdx()), 0);
+        test(reg_ptr_dst, vlen - 1);
         jnz(normal_store, T_NEAR);
         compute(!is_bf16);
         jmp(end_store, T_NEAR);
@@ -1012,8 +1017,7 @@ struct jit_bnorm_bwd_t : public jit_generator {
         jit_tail_.prepare_tail();
 
         Label normal_store, end_store;
-        CodeGeneratorAArch64::tst(Xbyak::Xbyak_aarch64::XReg(reg_ptr_diff_src.getIdx()), vlen - 1);
-        CodeGeneratorAArch64::cmp(Xbyak::Xbyak_aarch64::XReg(reg_ptr_diff_src.getIdx()), 0);
+        test(reg_ptr_diff_src, vlen - 1);
         jnz(normal_store, T_NEAR);
         compute(!is_bf16);
         jmp(end_store, T_NEAR);
