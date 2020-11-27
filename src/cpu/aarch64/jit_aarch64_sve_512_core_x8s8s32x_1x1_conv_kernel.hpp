@@ -113,9 +113,9 @@ private:
     const xa::XReg reduce_loop_iter = x7; //abi_param1;
     const xa::XReg reg_abi_param1 = x7; // abi_param1
 
-    const xa::PReg ktail_load_mask = p5;
-    const xa::PReg ktail_mask = p6;
-    const xa::PReg vmask = p7;
+    const xa::PReg ktail_load_mask = p2;
+    const xa::PReg ktail_mask = p3;
+    const xa::PReg vmask = p4;
     const xa::PReg mask_tmp = p8;
     const xa::PReg mask_all_zero = p9;
 
