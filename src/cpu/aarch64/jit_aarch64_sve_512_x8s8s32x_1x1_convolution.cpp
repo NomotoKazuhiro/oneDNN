@@ -37,7 +37,7 @@
 
 #include "cpu/aarch64/jit_generator.hpp"
 
-#include "cpu/aarch64/jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution.hpp"
+#include "cpu/aarch64/jit_aarch64_sve_512_x8s8s32x_1x1_convolution.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -50,7 +50,7 @@ using namespace dnnl::impl::utils;
 
 /* convolution forward */
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
+void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
         dst_type>::execute_forward(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
@@ -70,7 +70,7 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
 }
 
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
+void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
         dst_type>::execute_forward_thr(const int ithr, const int nthr,
         const src_data_t *src, const wei_data_t *weights, const char *bias,
         const wei_data_t *weights_dw, const char *bias_dw, dst_data_t *dst,
@@ -426,18 +426,14 @@ void jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<src_type,
 }
 
 using namespace data_type;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, u8>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, u8>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8, s8>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8, s8>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8,
-        s32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8,
-        s32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<u8,
-        f32>;
-template struct jit_aarch64_sve_512_core_x8s8s32x_1x1_convolution_fwd_t<s8,
-        f32>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<u8, u8>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<s8, u8>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<u8, s8>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<s8, s8>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<u8, s32>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<s8, s32>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<u8, f32>;
+template struct jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<s8, f32>;
 
 } // namespace aarch64
 } // namespace cpu

@@ -53,11 +53,10 @@ namespace aarch64 {
 namespace xa = Xbyak::Xbyak_aarch64;
 
 template <typename Vmm>
-struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel
-    : public jit_generator {
+struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel : public jit_generator {
     DECLARE_CPU_JIT_AUX_FUNCTIONS(
-            _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_fwd_ker_t)
-    _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel(
+            _jit_aarch64_sve_512_x8s8s32x_1x1_conv_fwd_ker_t)
+    _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel(
             const jit_1x1_conv_conf_t &ajcp, const primitive_attr_t &attr)
         : jit_generator(nullptr, 1024 * 1024)
         , jcp(ajcp)
@@ -72,7 +71,7 @@ struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel
         jit_ker = (void (*)(jit_1x1_conv_call_s *))this->getCode32();
     }
 
-    ~_jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {
+    ~_jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel() {
         delete eltwise_injector_;
     }
 
@@ -188,8 +187,8 @@ private:
     }
 };
 
-struct jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel {
-    jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel(
+struct jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel {
+    jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel(
             const jit_1x1_conv_conf_t &ajcp, const primitive_attr_t &attr)
         : jit_ker(nullptr)
         , zmm_kernel_(nullptr)
@@ -198,28 +197,25 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel {
         int ch_block = ajcp.ic_block;
         switch (ch_block) {
             case 16:
-                zmm_kernel_
-                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                                Xbyak::Zmm>(ajcp, attr);
+                zmm_kernel_ = new _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<
+                        Xbyak::Zmm>(ajcp, attr);
                 jit_ker = zmm_kernel_->jit_ker;
                 return;
             case 8:
-                ymm_kernel_
-                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                                Xbyak::Ymm>(ajcp, attr);
+                ymm_kernel_ = new _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<
+                        Xbyak::Ymm>(ajcp, attr);
                 jit_ker = ymm_kernel_->jit_ker;
                 return;
             case 4:
-                xmm_kernel_
-                        = new _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<
-                                Xbyak::Xmm>(ajcp, attr);
+                xmm_kernel_ = new _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<
+                        Xbyak::Xmm>(ajcp, attr);
                 jit_ker = xmm_kernel_->jit_ker;
                 return;
             default: assert(!"invalid channel blocking");
         }
     }
 
-    ~jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel() {
+    ~jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel() {
         delete xmm_kernel_;
         delete ymm_kernel_;
         delete zmm_kernel_;
@@ -238,13 +234,12 @@ struct jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel {
             const jit_1x1_conv_conf_t &jcp, const primitive_attr_t &attr);
 
     void (*jit_ker)(jit_1x1_conv_call_s *);
-    _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Zmm> *zmm_kernel_;
-    _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Ymm> *ymm_kernel_;
-    _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm> *xmm_kernel_;
+    _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Zmm> *zmm_kernel_;
+    _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Ymm> *ymm_kernel_;
+    _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm> *xmm_kernel_;
 
 private:
-    DNNL_DISALLOW_COPY_AND_ASSIGN(
-            jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel);
+    DNNL_DISALLOW_COPY_AND_ASSIGN(jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel);
 };
 
 } // namespace aarch64

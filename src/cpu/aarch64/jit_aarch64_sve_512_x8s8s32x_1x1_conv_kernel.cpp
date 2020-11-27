@@ -41,7 +41,7 @@
 
 #include "cpu/platform.hpp"
 
-#include "cpu/aarch64/jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel.hpp"
+#include "cpu/aarch64/jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel.hpp"
 #include "cpu/aarch64/jit_uni_1x1_conv_utils.hpp"
 
 #define GET_OFF(field) \
@@ -62,7 +62,7 @@ namespace xa = Xbyak::Xbyak_aarch64;
 #define SVE_compress_addr(base, offt) xa::ptr(get_comp_addr_reg(base, offt))
 
 template <typename Vmm>
-bool _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::maybe_eltwise(
+bool _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::maybe_eltwise(
         int position) {
     using namespace primitive_kind;
     const auto &p = attr_.post_ops_;
@@ -79,7 +79,7 @@ bool _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::maybe_eltwise(
 }
 
 template <typename Vmm>
-void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
+void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
         int load_loop_blk) {
     CGA64::mov(aux1_reg_bcast_data, reg_bcast_data);
     CGA64::mov(aux_reg_bcast_data, reg_bcast_data);
@@ -135,7 +135,7 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
 }
 
 //template <typename Vmm>
-//void _jit_avx512_core_x8s8s32x_1x1_conv_kernel<Vmm>::cvt2ps(data_type_t type_in,
+//void _jit_avx512_x8s8s32x_1x1_conv_kernel<Vmm>::cvt2ps(data_type_t type_in,
 //        const Vmm vmm_in, const Xbyak::Operand &op, bool mask_flag) {
 //    const Vmm vmm = mask_flag ? vmm_in | ktail_mask | T_z : vmm_in;
 //    switch (type_in) {
@@ -149,7 +149,7 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
 //}
 
 template <typename Vmm>
-void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
+void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         int load_loop_blk, int ur, int substep, bool wraparound) {
     auto vreg_load
             = [=](int i_load) { return xa::ZReg(ur * load_loop_blk + i_load); };
@@ -768,7 +768,7 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
 }
 
 template <typename Vmm>
-void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
+void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
 
     preamble();
     const int simd_w = jcp.ic_block;
@@ -938,7 +938,7 @@ void _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
     }
 }
 
-bool jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::post_ops_ok(
+bool jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::post_ops_ok(
         jit_1x1_conv_conf_t &jcp, const primitive_attr_t &attr) {
     using namespace primitive_kind;
     const auto &p = attr.post_ops_;
@@ -963,7 +963,7 @@ bool jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::post_ops_ok(
     return false;
 }
 
-status_t jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_conf(
+status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
         jit_1x1_conv_conf_t &jcp, const convolution_desc_t &cd,
         const memory_desc_t *&src_md, memory_desc_t &weights_md,
         memory_desc_t &dst_md, memory_desc_t &bias_md,
@@ -1304,15 +1304,15 @@ status_t jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_conf(
     return status::success;
 }
 
-void jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel::init_scratchpad(
+void jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_scratchpad(
         memory_tracking::registrar_t &scratchpad,
         const jit_1x1_conv_conf_t &jcp, const primitive_attr_t &attr) {
     using namespace dnnl::impl::memory_tracking::names;
 }
 
-template struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Zmm>;
-template struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Ymm>;
-template struct _jit_aarch64_sve_512_core_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm>;
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Zmm>;
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Ymm>;
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm>;
 
 } // namespace aarch64
 } // namespace cpu
