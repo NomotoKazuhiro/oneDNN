@@ -130,10 +130,10 @@ private:
     xa::XReg reg_tmp3_adr = x26; // tmp for address value
 
     const xa::PReg ktail_mask = p2;
-    const xa::PReg kblend_mask = p3;
+    const xa::PReg kblend_mask = p8;
 
-    const xa::PReg mask_tmp = p7;
-    const xa::PReg mask_tmp2 = p6;
+    const xa::PReg mask_tmp = p3;
+    const xa::PReg mask_tmp2 = p9;
     const xa::PReg mask_all_one = p4;
 
     const xa::ZReg vmm_wei = xa::ZReg(31);
