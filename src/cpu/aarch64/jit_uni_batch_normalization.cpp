@@ -1634,7 +1634,12 @@ struct jit_bnorm_t : public jit_generator {
 
             if (isa == sse41) {
                 movups(vbuf, vscale);
+#ifdef DNNL_X64_IMPLEMENTATION
                 divps(vbuf, vsqrtvar);
+#else // #ifdef DNNL_X64_IMPLEMENTATION
+                CG::fdiv(xa::VReg4S(IDX(vbuf)), xa::VReg4S(IDX(vbuf)),
+                        xa::VReg4S(IDX(vsqrtvar)));
+#endif //#ifdef DNNL_X64_IMPLEMENTATION
                 movups(vdiv, vbuf);
             } else {
 #ifdef DNNL_X64_IMPLEMENTATION
