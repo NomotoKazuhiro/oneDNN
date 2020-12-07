@@ -1,5 +1,6 @@
 /*******************************************************************************
 * Copyright 2016-2020 Intel Corporation
+* Copyright 2020 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -17,8 +18,6 @@
 #ifndef CPU_AARCH64_JIT_GENERATOR_HPP
 #define CPU_AARCH64_JIT_GENERATOR_HPP
 
-#define XBYAK_CODE_PTR uint32
-
 #include <limits.h>
 
 #include "common/bit_cast.hpp"
@@ -27,22 +26,13 @@
 
 #include "cpu/aarch64/cpu_isa_traits.hpp"
 
-#if defined(_WIN32) && !defined(__GNUC__)
-#define STRUCT_ALIGN(al, ...) __declspec(align(al)) __VA_ARGS__
-#else
-#define STRUCT_ALIGN(al, ...) __VA_ARGS__ __attribute__((__aligned__(al)))
-#endif
+#include "cpu/aarch64/jit_utils/jit_utils.hpp"
 
-#if defined(_WIN32)
-#define OFFSET_SHADOWSPACE 0x28
-#endif
+#define STRUCT_ALIGN(al, ...) __VA_ARGS__ __attribute__((__aligned__(al)))
 
 #define DECLARE_CPU_JIT_AUX_FUNCTIONS(jit_name) \
     const char *name() const override { return STRINGIFY(jit_name); } \
     const char *source_file() const override { return __FILE__; }
-
-typedef Xbyak::CodeGenerator::CodeGeneratorAArch64 CGA64;
-namespace xa = Xbyak::Xbyak_aarch64;
 
 namespace dnnl {
 namespace impl {
@@ -62,990 +52,166 @@ static inline int float2int(float x) {
     return utils::bit_cast<int>(x);
 }
 
-// TODO: A GPR class that hides ABI details from the JIT kernels and allows
-// numbering registers from 0 to 14 (x86_64) / 6 (x32) (gpr0, gpr1, ...) and
-// stack register (sr).
-//
-// This will allow using syntax like this:
-//
-// param = gpr0;
-// reg_input = gpr0;
-// reg_output =  gpr1;
-// ...
-//
-// #ifndef XBYAK64
-// mov(param, ptr[sr])
-// #endif
-//
-// (Roma)
-
 // Callee-saved registers
-constexpr Xbyak::Xbyak_aarch64::Operand::Code abi_save_gpr_regs_aarch64[] = {
-        Xbyak::Xbyak_aarch64::Operand::X19, Xbyak::Xbyak_aarch64::Operand::X20,
-        Xbyak::Xbyak_aarch64::Operand::X21, Xbyak::Xbyak_aarch64::Operand::X22,
-        Xbyak::Xbyak_aarch64::Operand::X23, Xbyak::Xbyak_aarch64::Operand::X24,
-        Xbyak::Xbyak_aarch64::Operand::X25, Xbyak::Xbyak_aarch64::Operand::X26,
-        Xbyak::Xbyak_aarch64::Operand::X27, Xbyak::Xbyak_aarch64::Operand::X28};
+constexpr Xbyak_aarch64::Operand::Code abi_save_gpr_regs[]
+        = {Xbyak_aarch64::Operand::X19, Xbyak_aarch64::Operand::X20,
+                Xbyak_aarch64::Operand::X21, Xbyak_aarch64::Operand::X22,
+                Xbyak_aarch64::Operand::X23, Xbyak_aarch64::Operand::X24,
+                Xbyak_aarch64::Operand::X25, Xbyak_aarch64::Operand::X26,
+                Xbyak_aarch64::Operand::X27, Xbyak_aarch64::Operand::X28};
 
 // See "Procedure Call Standsard for the ARM 64-bit Architecture (AArch64)"
-static const Xbyak::Xbyak_aarch64::XReg abi_param1_aarch64(
-        Xbyak::Xbyak_aarch64::Operand::X0),
-        abi_param2_aarch64(Xbyak::Xbyak_aarch64::Operand::X1),
-        abi_param3_aarch64(Xbyak::Xbyak_aarch64::Operand::X2),
-        abi_param4_aarch64(Xbyak::Xbyak_aarch64::Operand::X3),
-        abi_param5_aarch64(Xbyak::Xbyak_aarch64::Operand::X4),
-        abi_param6_aarch64(Xbyak::Xbyak_aarch64::Operand::X5),
-        abi_param7_aarch64(Xbyak::Xbyak_aarch64::Operand::X6),
-        abi_param8_aarch64(Xbyak::Xbyak_aarch64::Operand::X7),
-        abi_not_param1_aarch64(Xbyak::Xbyak_aarch64::Operand::
-                        X15); // Fujitsu uses X15 on A64FX as
-// abi_not_param1 on x64.
-#ifdef XBYAK64
-constexpr Xbyak::Operand::Code abi_save_gpr_regs[] = {
-        Xbyak::Operand::RBX,
-        Xbyak::Operand::RBP,
-        Xbyak::Operand::R12,
-        Xbyak::Operand::R13,
-        Xbyak::Operand::R14,
-        Xbyak::Operand::R15,
-#ifdef _WIN32
-        Xbyak::Operand::RDI,
-        Xbyak::Operand::RSI,
-#endif
-};
-
-#ifdef _WIN32
-static const Xbyak::Reg64 abi_param1(Xbyak::Operand::RCX),
-        abi_param2(Xbyak::Operand::RDX), abi_param3(Xbyak::Operand::R8),
-        abi_param4(Xbyak::Operand::R9), abi_not_param1(Xbyak::Operand::RDI);
-#else
-static const Xbyak::Reg64 abi_param1(Xbyak::Operand::RDI),
-        abi_param2(Xbyak::Operand::RSI), abi_param3(Xbyak::Operand::RDX),
-        abi_param4(Xbyak::Operand::RCX), abi_param5(Xbyak::Operand::R8),
-        abi_param6(Xbyak::Operand::R9), abi_not_param1(Xbyak::Operand::RCX);
-#endif
-#endif //#ifdef XBYAK64
-
+static const Xbyak_aarch64::XReg abi_param1(Xbyak_aarch64::Operand::X0),
+        abi_param2(Xbyak_aarch64::Operand::X1),
+        abi_param3(Xbyak_aarch64::Operand::X2),
+        abi_param4(Xbyak_aarch64::Operand::X3),
+        abi_param5(Xbyak_aarch64::Operand::X4),
+        abi_param6(Xbyak_aarch64::Operand::X5),
+        abi_param7(Xbyak_aarch64::Operand::X6),
+        abi_param8(Xbyak_aarch64::Operand::X7),
+        abi_not_param1(Xbyak_aarch64::Operand::X15);
 } // namespace
 
-class jit_generator : public Xbyak::CodeGenerator {
-private:
-    const size_t xmm_len = 16;
-#ifdef _WIN32
-    const size_t xmm_to_preserve_start = 6;
-    const size_t xmm_to_preserve = 10;
-#else
-#ifndef DNNL_INDIRECT_JIT_AARCH64
-    const size_t xmm_to_preserve_start = 0;
-#endif
-    const size_t xmm_to_preserve = 0;
-#endif
+class jit_generator : public Xbyak_aarch64::CodeGenerator, public c_compatible {
+public:
+    using c_compatible::operator new;
+    using c_compatible::operator new[];
+    using c_compatible::operator delete;
+    using c_compatible::operator delete[];
 
+private:
     const size_t xreg_len = 8;
     const size_t vreg_len_preserve = 8; // Only bottom 8byte must be preserved.
     const size_t vreg_to_preserve = 8; // VREG8 - VREG15
 
-    const size_t num_abi_save_gpr_regs_aarch64
-            = sizeof(abi_save_gpr_regs_aarch64)
-            / sizeof(abi_save_gpr_regs_aarch64[0]);
-
-    const size_t size_of_abi_save_regs_aarch64
-            = (num_abi_save_gpr_regs_aarch64 + 2) * x0.getBit() / 8
-            + xmm_to_preserve * xmm_len;
-
-    const size_t preserved_stack_size
-            = xreg_len * (2 + num_abi_save_gpr_regs_aarch64)
-            + vreg_len_preserve * vreg_to_preserve;
-
     const size_t num_abi_save_gpr_regs
             = sizeof(abi_save_gpr_regs) / sizeof(abi_save_gpr_regs[0]);
 
-    const size_t size_of_abi_save_regs
-            = num_abi_save_gpr_regs * rax.getBit() / 8
-            + xmm_to_preserve * xmm_len;
+    const size_t preserved_stack_size = xreg_len * (2 + num_abi_save_gpr_regs)
+            + vreg_len_preserve * vreg_to_preserve;
+
+    const size_t size_of_abi_save_regs = num_abi_save_gpr_regs * x0.getBit() / 8
+            + vreg_to_preserve * vreg_len_preserve;
 
 public:
-    enum {
-        _cmp_eq_oq = 0u,
-        _cmp_lt_os = 1u,
-        _cmp_le_os = 2u,
-        _cmp_neq_uq = 4u,
-        _cmp_nlt_us = 5u,
-        _cmp_nle_us = 6u,
+    const Xbyak_aarch64::WReg W_TMP_0 = w23;
+    const Xbyak_aarch64::WReg W_TMP_1 = w24;
+    const Xbyak_aarch64::WReg W_TMP_2 = w25;
+    const Xbyak_aarch64::WReg W_TMP_3 = w26;
+    const Xbyak_aarch64::WReg W_TMP_4 = w27;
+    const Xbyak_aarch64::XReg X_TMP_0 = x23;
+    const Xbyak_aarch64::XReg X_TMP_1 = x24;
+    const Xbyak_aarch64::XReg X_TMP_2 = x25;
+    const Xbyak_aarch64::XReg X_TMP_3 = x26;
+    const Xbyak_aarch64::XReg X_TMP_4 = x27;
+    const Xbyak_aarch64::XReg X_DEFAULT_ADDR = x28;
+    const Xbyak_aarch64::XReg X_SP = x21;
+    const Xbyak_aarch64::XReg X_TRANSLATOR_STACK = x22;
+    const Xbyak_aarch64::PReg P_TMP = p0;
+    const Xbyak_aarch64::PReg P_TMP_0 = p11;
+    const Xbyak_aarch64::PReg P_TMP_1 = p12;
+    const Xbyak_aarch64::PReg P_ALL_ZERO = p10;
+    const Xbyak_aarch64::PReg P_MSB_256 = p13;
+    const Xbyak_aarch64::PReg P_MSB_384 = p14;
+    const Xbyak_aarch64::PReg P_ALL_ONE = p15;
 
-        _op_floor = 1u,
-        _op_mxcsr = 4u,
-    };
-
-    xa::XReg param1_aarch64 = abi_param1_aarch64;
-    class XRegValue : public xa::XReg {
-    public:
-        int64_t value_;
-        explicit XRegValue(uint32_t idx, int64_t value)
-            : Xbyak::Xbyak_aarch64::XReg(idx), value_(value) {}
-        explicit XRegValue(uint32_t idx)
-            : Xbyak::Xbyak_aarch64::XReg(idx), value_(0xFFFFFFFFFFFFFFFF) {}
-    };
-
-    inline size_t get_size_of_abi_save_regs_aarch64() {
-        return size_of_abi_save_regs_aarch64;
-    }
-    Xbyak::Reg64 param1 = abi_param1;
-    const int EVEX_max_8b_offt = 0x200;
-    const Xbyak::Reg64 reg_EVEX_max_8b_offt = rbp;
+    const Xbyak_aarch64::XReg param1 = abi_param1;
+    constexpr static size_t translator_stack_offset = 1024 * 128;
+    constexpr static uint32_t DUMMY_IDX = 99;
 
     inline size_t get_size_of_abi_save_regs() { return size_of_abi_save_regs; }
 
     void preamble() {
-        CGA64::stp(x29, x30, pre_ptr(CGA64::sp, -16));
+        stp(x29, x30, pre_ptr(sp, -16));
         /* x29 is a frame pointer. */
-        CGA64::mov(x29, CGA64::sp);
-        CGA64::sub(CGA64::sp, CGA64::sp,
-                static_cast<int64_t>(preserved_stack_size) - 16);
+        mov(x29, sp);
+        sub(sp, sp, static_cast<int64_t>(preserved_stack_size) - 16);
 
         /* x9 can be used as a temporal register. */
-        CGA64::mov(x9, CGA64::sp);
+        mov(x9, sp);
 
         if (vreg_to_preserve) {
-            CGA64::st4((v8.d - v11.d)[0], post_ptr(x9, vreg_len_preserve * 4));
-            CGA64::st4((v12.d - v15.d)[0], post_ptr(x9, vreg_len_preserve * 4));
+            st4((v8.d - v11.d)[0], post_ptr(x9, vreg_len_preserve * 4));
+            st4((v12.d - v15.d)[0], post_ptr(x9, vreg_len_preserve * 4));
         }
-        for (size_t i = 0; i < num_abi_save_gpr_regs_aarch64; i += 2) {
-            CGA64::stp(xa::XReg(abi_save_gpr_regs_aarch64[i]),
-                    xa::XReg(abi_save_gpr_regs_aarch64[i + 1]),
+        for (size_t i = 0; i < num_abi_save_gpr_regs; i += 2) {
+            stp(Xbyak_aarch64::XReg(abi_save_gpr_regs[i]),
+                    Xbyak_aarch64::XReg(abi_save_gpr_regs[i + 1]),
                     post_ptr(x9, xreg_len * 2));
         }
-        CGA64::ptrue(P_ALL_ONE.b);
-        CGA64::ptrue(P_MSB_384.b, xa::VL16);
-        CGA64::ptrue(P_MSB_256.b, xa::VL32);
-        CGA64::not_(P_MSB_384.b, P_ALL_ONE / xa::T_z, P_MSB_384.b);
-        CGA64::not_(P_MSB_256.b, P_ALL_ONE / xa::T_z, P_MSB_256.b);
 
-        /* arg values are passed different registers between x86_64 and aarch64. */
-        CGA64::mov(x7, x0); /* First arg. */
-        CGA64::mov(x6, x1); /* Sedond arg. */
-        CGA64::mov(x2, x2);
-        CGA64::mov(x1, x3);
-        CGA64::mov(x8, x4);
-        CGA64::mov(x9, x5); /* 6-th arg. */
-        /* Note:If # of args is more than 6, 7-th, 8-th, ..., args are passed by stack. */
-        CGA64::mov(
-                x4, CGA64::sp); /* Intel64's stack register is 4-th register. */
-        CGA64::sub_imm(X_TRANSLATOR_STACK, x4, xt_stack_offset, X_TMP_0);
-        CGA64::mov_imm(X_TMP_0,
-                getTranslatorVersion()); /*get translator version info */
-
-        if (mayiuse(avx512_common)) {
-            mov(reg_EVEX_max_8b_offt, 2 * EVEX_max_8b_offt);
+        if (mayiuse(sve_512)) {
+            ptrue(P_ALL_ONE.b);
+            ptrue(P_MSB_384.b, Xbyak_aarch64::VL16);
+            ptrue(P_MSB_256.b, Xbyak_aarch64::VL32);
+            not_(P_MSB_384.b, P_ALL_ONE / Xbyak_aarch64::T_z, P_MSB_384.b);
+            not_(P_MSB_256.b, P_ALL_ONE / Xbyak_aarch64::T_z, P_MSB_256.b);
+            pfalse(P_ALL_ZERO.b);
         }
-    }
-
-//TODO:
-#if 0
-    // This function returns the address on the stack of the fist argument
-    // that is not passed by register
-    // By default it assumes to be called after the prologue
-    // Note: that we cannot use RBP inside as we override it in preamble
-    // for address computation in EVEX instructions
-    inline const Xbyak::RegExp get_stack_params_address(
-            bool after_prolog = true) {
-        int saved_regs_size = after_prolog ? get_size_of_abi_save_regs() : 0;
-#ifdef _WIN32
-        // Using stack layout described in MS ABI
-        // (https://docs.microsoft.com/en-us/cpp/build/stack-usage?view=vs-2019)
-        // here, the return address and the first 4 parameters are allocated
-        // on the stack
-        int first_params_and_return_addr_size = 40;
-#else
-        // In System V ABI, only the return address is stacked
-        // before the arguments
-        int first_params_and_return_addr_size = 8;
-#endif
-        return x0 + saved_regs_size + first_params_and_return_addr_size;
-    }
-#endif
-
-    void mic_prefetcht0(Xbyak::Address a) {
-        if (mayiuse(avx512_mic)) prefetcht0(a);
-    }
-
-    void mic_prefetcht1(Xbyak::Address a) {
-        if (mayiuse(avx512_mic)) prefetcht1(a);
-    }
-
-    void mic_prefetcht2(Xbyak::Address a) {
-        if (mayiuse(avx512_mic)) prefetcht2(a);
-    }
-
-    void uni_vzeroupper() {
-        if (mayiuse(avx) && !mayiuse(avx512_mic)) vzeroupper();
+        mov(X_SP, sp);
+        sub_imm(X_TRANSLATOR_STACK, X_SP, translator_stack_offset, X_TMP_0);
     }
 
     void postamble() {
-        CGA64::mov(x9, CGA64::sp);
-        CGA64::eor(P_ALL_ONE.b, P_ALL_ONE / xa::T_z, P_ALL_ONE.b, P_ALL_ONE.b);
-        CGA64::eor(P_MSB_384.b, P_MSB_384 / xa::T_z, P_MSB_384.b, P_MSB_384.b);
-        CGA64::eor(P_MSB_256.b, P_MSB_256 / xa::T_z, P_MSB_256.b, P_MSB_256.b);
-
-        if (vreg_to_preserve) {
-            CGA64::ld4((v8.d - v11.d)[0], post_ptr(x9, vreg_len_preserve * 4));
-            CGA64::ld4((v12.d - v15.d)[0], post_ptr(x9, vreg_len_preserve * 4));
+        mov(x9, sp);
+        if (mayiuse(sve_512)) {
+            eor(P_ALL_ONE.b, P_ALL_ONE / Xbyak_aarch64::T_z, P_ALL_ONE.b,
+                    P_ALL_ONE.b);
+            eor(P_MSB_384.b, P_MSB_384 / Xbyak_aarch64::T_z, P_MSB_384.b,
+                    P_MSB_384.b);
+            eor(P_MSB_256.b, P_MSB_256 / Xbyak_aarch64::T_z, P_MSB_256.b,
+                    P_MSB_256.b);
         }
 
-        for (size_t i = 0; i < num_abi_save_gpr_regs_aarch64; i += 2) {
-            CGA64::ldp(xa::XReg(abi_save_gpr_regs_aarch64[i]),
-                    xa::XReg(abi_save_gpr_regs_aarch64[i + 1]),
+        if (vreg_to_preserve) {
+            ld4((v8.d - v11.d)[0], post_ptr(x9, vreg_len_preserve * 4));
+            ld4((v12.d - v15.d)[0], post_ptr(x9, vreg_len_preserve * 4));
+        }
+
+        for (size_t i = 0; i < num_abi_save_gpr_regs; i += 2) {
+            ldp(Xbyak_aarch64::XReg(abi_save_gpr_regs[i]),
+                    Xbyak_aarch64::XReg(abi_save_gpr_regs[i + 1]),
                     post_ptr(x9, xreg_len * 2));
         }
 
-        CGA64::add(CGA64::sp, CGA64::sp,
-                static_cast<int64_t>(preserved_stack_size) - 16);
-        CGA64::ldp(x29, x30, post_ptr(CGA64::sp, 16));
-        CGA64::ret();
-    }
-
-    template <typename T>
-    Xbyak::Address EVEX_compress_addr(
-            Xbyak::Reg64 base, T raw_offt, bool bcast = false) {
-        using Xbyak::Address;
-        using Xbyak::Reg64;
-        using Xbyak::RegExp;
-        using Xbyak::Zmm;
-
-        assert(raw_offt <= INT_MAX);
-        auto offt = static_cast<int>(raw_offt);
-
-        int scale = 0;
-
-        if (EVEX_max_8b_offt <= offt && offt < 3 * EVEX_max_8b_offt) {
-            offt = offt - 2 * EVEX_max_8b_offt;
-            scale = 1;
-        } else if (3 * EVEX_max_8b_offt <= offt
-                && offt < 5 * EVEX_max_8b_offt) {
-            offt = offt - 4 * EVEX_max_8b_offt;
-            scale = 2;
-        }
-
-        auto re = RegExp() + base + offt;
-        if (scale) re = re + reg_EVEX_max_8b_offt * scale;
-
-        if (bcast)
-            return zword_b[re];
-        else
-            return zword[re];
-    }
-
-    Xbyak::Address make_safe_addr(const Xbyak::Reg64 &reg_out, size_t offt,
-            const Xbyak::Reg64 &tmp_reg, bool bcast = false) {
-        if (offt > INT_MAX) {
-            mov(tmp_reg, offt);
-            return bcast ? ptr_b[reg_out + tmp_reg] : ptr[reg_out + tmp_reg];
-        } else {
-            return bcast ? ptr_b[reg_out + offt] : ptr[reg_out + offt];
-        }
-    }
-
-    Xbyak::Address EVEX_compress_addr_safe(const Xbyak::Reg64 &base,
-            size_t raw_offt, const Xbyak::Reg64 &reg_offt, bool bcast = false) {
-        if (raw_offt > INT_MAX) {
-            return make_safe_addr(base, raw_offt, reg_offt, bcast);
-        } else {
-            return EVEX_compress_addr(base, raw_offt, bcast);
-        }
-    }
-
-    void safe_add(const Xbyak::Reg64 &base, size_t raw_offt,
-            const Xbyak::Reg64 &reg_offt) {
-        if (raw_offt > INT_MAX) {
-            mov(reg_offt, raw_offt);
-            add(base, reg_offt);
-        } else {
-            add(base, raw_offt);
-        }
-    }
-
-    void safe_sub(const Xbyak::Reg64 &base, size_t raw_offt,
-            const Xbyak::Reg64 &reg_offt) {
-        if (raw_offt > INT_MAX) {
-            mov(reg_offt, raw_offt);
-            sub(base, reg_offt);
-        } else {
-            sub(base, raw_offt);
-        }
+        add(sp, sp, static_cast<int64_t>(preserved_stack_size) - 16);
+        ldp(x29, x30, post_ptr(sp, 16));
+        ret();
     }
 
     // Disallow char-based labels completely
     void L(const char *label) = delete;
-    void L(Xbyak::Label &label) { Xbyak::CodeGenerator::L(label); }
+    void L(Xbyak_aarch64::Label &label) {
+        Xbyak_aarch64::CodeGenerator::L(label);
+    }
 
-    void L_aligned(Xbyak::Label &label, int alignment = 16) {
+    void L_aligned(Xbyak_aarch64::Label &label, int alignment = 16) {
         align(alignment);
         L(label);
     }
-    void uni_vpxor(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        if (mayiuse(avx512_core))
-            vpxord(x1, x2, op);
-        else if (mayiuse(avx))
-            vpxor(x1, x2, op);
-        else {
-            assert(x1.isEqualIfNotInherited(x2));
-            pxor(x2, op);
-        }
-    }
-    void uni_vpxor(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        if (mayiuse(avx512_core))
-            vpxord(x1, x2, op);
-        else if (mayiuse(avx2))
-            vpxor(x1, x2, op);
-        else
-            vxorps(x1, x2, op);
-    }
-    void uni_vpxor(const Xbyak::Zmm &x1, const Xbyak::Zmm &x2,
-            const Xbyak::Operand &op) {
-        vpxord(x1, x2, op);
-    }
-
-    void uni_vmovss(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        movss(addr, x);
-    }
-    void uni_vmovss(const Xbyak::Address &addr, const Xbyak::Ymm &x) {
-        vmovss(addr, Xbyak::Xmm(x.getIdx()));
-    }
-    void uni_vmovss(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        movss(x, op);
-    }
-    void uni_vmovss(const Xbyak::Ymm &x, const Xbyak::Address &addr) {
-        vmovss(Xbyak::Xmm(x.getIdx()), addr);
-    }
-    void uni_vmovss(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2) {
-        vmovss(Xbyak::Xmm(x1.getIdx()), Xbyak::Xmm(x2.getIdx()));
-    }
-
-    void uni_vmovsd(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        movsd(addr, x);
-    }
-    void uni_vmovsd(const Xbyak::Address &addr, const Xbyak::Ymm &x) {
-        vmovsd(addr, x);
-    }
-    void uni_vmovsd(const Xbyak::Xmm &x, const Xbyak::Address &addr) {
-        movsd(x, addr);
-    }
-    void uni_vmovsd(const Xbyak::Ymm &x, const Xbyak::Address &addr) {
-        vmovsd(x, addr);
-    }
-
-    void uni_vmovdqu(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        movdqu(addr, x);
-    }
-    void uni_vmovdqu(const Xbyak::Address &addr, const Xbyak::Ymm &x) {
-        vmovdqu(addr, x);
-    }
-    void uni_vmovdqu(const Xbyak::Address &addr, const Xbyak::Zmm &x) {
-        vmovdqu32(addr, x);
-    }
-
-    void uni_vmovdqu(const Xbyak::Xmm &x, const Xbyak::Address &addr) {
-        movdqu(x, addr);
-    }
-    void uni_vmovdqu(const Xbyak::Ymm &x, const Xbyak::Address &addr) {
-        vmovdqu(x, addr);
-    }
-    void uni_vmovdqu(const Xbyak::Zmm &x, const Xbyak::Address &addr) {
-        vmovdqu32(x, addr);
-    }
-
-    void uni_vmovups(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        movups(addr, x);
-    }
-    void uni_vmovups(const Xbyak::Address &addr, const Xbyak::Ymm &x) {
-        vmovups(addr, x);
-    }
-
-    void uni_vmovups(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        movups(x, op);
-    }
-    void uni_vmovups(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        vmovups(x, op);
-    }
-
-    void uni_vmovups_tail(const Xbyak::Address &addr, const Xbyak::Ymm &mask,
-            const Xbyak::Ymm &x) {
-        vmaskmovps(addr, mask, x);
-    }
-    void uni_vmovups_tail(const Xbyak::Ymm &x, const Xbyak::Ymm &mask,
-            const Xbyak::Address &addr) {
-        vmaskmovps(x, mask, addr);
-    }
-
-    void uni_vmovups_tail(const Xbyak::Address &addr, const Xbyak::Opmask &mask,
-            const Xbyak::Zmm &x) {
-        vmovups(addr | mask, x);
-    }
-    void uni_vmovups_tail(const Xbyak::Zmm &x, const Xbyak::Opmask &mask,
-            const Xbyak::Address &addr) {
-        vmovups(x | mask | T_z, addr);
-    }
-
-    void uni_vmovntps(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        movntps(addr, x);
-    }
-    void uni_vmovntps(const Xbyak::Address &addr, const Xbyak::Ymm &x) {
-        vmovntps(addr, x);
-    }
-
-    void uni_vbroadcastss(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        movss(x, op);
-        shufps(x, x, 0x0);
-    }
-    void uni_vbroadcastss(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        if (op.isMEM() || mayiuse(avx2)) {
-            vbroadcastss(x, op);
-        } else {
-            Xbyak::Xmm t(x.getIdx());
-            if (!t.isEqualIfNotInherited(op)) movss(t, op);
-            vinsertf128(x, x, t, 1);
-            vshufps(x, x, x, 0);
-        }
-    }
-
-    void uni_vpbroadcastd(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        movsd(x, op);
-        pshufd(x, x, 0x0);
-    }
-    void uni_vpbroadcastd(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        if (mayiuse(avx2)) {
-            vpbroadcastd(x, op);
-        } else {
-            Xbyak::Xmm t(x.getIdx());
-            if (!t.isEqualIfNotInherited(op)) movsd(t, op);
-            vinsertf128(x, x, t, 1);
-            vshufps(x, x, x, 0);
-        }
-    }
-
-    void uni_vshufps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op, Xbyak::uint8 imm) {
-        if (mayiuse(avx))
-            vshufps(x1, x2, op, imm);
-        else {
-            movups(x1, x2);
-            shufps(x1, op, imm);
-        }
-    }
-
-    void uni_vrcpss(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        rcpss(x, op);
-    }
-    void uni_vrcpss(const Xbyak::Ymm &x1, const Xbyak::Xmm &x2) {
-        Xbyak::Xmm x1_(x1.getIdx());
-        Xbyak::Xmm x2_(x2.getIdx());
-        vrcpss(x1_, x1_, x2_);
-    }
-    void uni_vrcpss(const Xbyak::Ymm &x, const Xbyak::Address &op) {
-        Xbyak::Xmm x_(x.getIdx());
-        vrcpss(x_, x_, op);
-    }
-
-    void uni_vrcpps(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        rcpps(x, op);
-    }
-    void uni_vrcpps(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        vrcpps(x, op);
-    }
-    void uni_vrcpps(const Xbyak::Zmm &x, const Xbyak::Operand &op) {
-        vrcp14ps(x, op);
-    }
-
-    void uni_vdivps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        divps(x, op2);
-    }
-    void uni_vdivps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vdivps(x, op1, op2);
-    }
-
-    void uni_vdivps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2, const Xbyak::Xmm &buf) {
-        movups(buf, op1);
-        divps(buf, op2);
-        if (x.getIdx() != buf.getIdx()) { movups(x, buf); }
-    }
-
-    void uni_vdivps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2, const Xbyak::Ymm &buf) {
-        vdivps(x, op1, op2);
-    }
-
-    void uni_vaddps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.getIdx() == op1.getIdx());
-        addps(x, op2);
-    }
-    void uni_vaddps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vaddps(x, op1, op2);
-    }
-    void uni_vaddss(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        addss(x, op2);
-    }
-    void uni_vaddss(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vaddss(x, op1, op2);
-    }
-
-    void uni_vpsignd(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        assert(x1.getIdx() == x2.getIdx());
-        psignd(x1, op);
-    }
-    void uni_vpsignd(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vpsignd(x1, x2, op);
-    }
-
-    void uni_vpsubd(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        assert(x1.getIdx() == x2.getIdx());
-        psubd(x1, op);
-    }
-    void uni_vpsubd(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        vpsubd(x1, x2, op);
-    }
-
-    void uni_vsubss(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        subps(x, op2);
-    }
-    void uni_vsubss(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vsubss(x, Xbyak::Xmm(op1.getIdx()), Xbyak::Xmm(op2.getIdx()));
-    }
-
-    void uni_vsubps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        subps(x, op2);
-    }
-    void uni_vsubps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vsubps(x, op1, op2);
-    }
-
-    void uni_vsubps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2, const Xbyak::Xmm &buf) {
-        movups(buf, op1);
-        subps(buf, op2);
-        if (x.getIdx() != buf.getIdx()) { movups(x, buf); }
-    }
-
-    void uni_vsubps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2, const Xbyak::Ymm &buf) {
-        vsubps(x, op1, op2);
-    }
-
-    void uni_vmulps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        mulps(x, op2);
-    }
-    void uni_vmulps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vmulps(x, op1, op2);
-    }
-
-    void uni_vmulss(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        mulss(x, op2);
-    }
-    void uni_vmulss(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Address &op2) {
-        vmulss(x, Xbyak::Xmm(op1.getIdx()), op2);
-    }
-    void uni_vmulss(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Ymm &op2) {
-        vmulss(x, Xbyak::Xmm(op1.getIdx()), Xbyak::Xmm(op2.getIdx()));
-    }
-
-    void uni_vfmadd213ps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x1 gets overriden by x1*x2
-        // This is incorrect if x1 == op
-        assert(!x1.isEqualIfNotInherited(op));
-        mulps(x1, x2);
-        addps(x1, op);
-    }
-    void uni_vfmadd213ps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfmadd213ps(x1, x2, op);
-    }
-
-    void uni_vfmadd213ss(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x1 gets overriden by x1*x2
-        // This is incorrect if x1 == op
-        assert(!x1.isEqualIfNotInherited(op));
-        mulss(x1, x2);
-        addss(x1, op);
-    }
-    void uni_vfmadd213ss(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfmadd213ss(x1, x2, op);
-    }
-
-    void uni_vfmadd231ps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x2 gets overriden by x2*op
-        // This is incorrect if x1 == x2
-        assert(x1.getIdx() != x2.getIdx());
-        mulps(x2, op);
-        addps(x1, x2);
-    }
-    void uni_vfmadd231ps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfmadd231ps(x1, x2, op);
-    }
-    void uni_vfmadd231ss(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x2 gets overriden by x2*op
-        // This is incorrect if x1 == x2
-        assert(x1.getIdx() != x2.getIdx());
-        mulss(x2, op);
-        addss(x1, x2);
-    }
-    void uni_vfmadd231ss(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfmadd231ss(Xbyak::Xmm(x1.getIdx()), Xbyak::Xmm(x2.getIdx()), op);
-    }
-
-    void uni_vfnmadd231ps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x2 gets overriden by x2*op
-        // This is incorrect if x1 == x2
-        assert(x1.getIdx() != x2.getIdx());
-        mulps(x2, op);
-        subps(x1, x2);
-    }
-
-    void uni_vfnmadd231ps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfnmadd231ps(x1, x2, op);
-    }
-
-    void uni_vfmsub213ps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        // Note: x1 gets overriden by x1*x2
-        // This is incorrect if x1 == op
-        assert(!x1.isEqualIfNotInherited(op));
-        mulps(x1, x2);
-        subps(x1, op);
-    }
-    void uni_vfmsub213ps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vfmsub213ps(x1, x2, op);
-    }
-
-    void uni_vsqrtps(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        sqrtps(x, op);
-    }
-    void uni_vsqrtps(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        vsqrtps(x, op);
-    }
-
-    void uni_vpaddd(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        if (mayiuse(avx))
-            vpaddd(x1, x2, op);
-        else {
-            if (x1.getIdx() != x2.getIdx()) movdqa(x1, x2);
-            paddd(x1, op);
-        }
-    }
-    void uni_vpaddd(const Xbyak::Ymm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        vpaddd(x1, x2, op);
-    }
-
-    void uni_vpmaddwd(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        if (mayiuse(avx))
-            vpmaddwd(x1, x2, op);
-        else {
-            if (x1.getIdx() != x2.getIdx()) movdqa(x1, x2);
-            pmaddwd(x1, op);
-        }
-    }
-    void uni_vpmaddwd(const Xbyak::Ymm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        vpmaddwd(x1, x2, op);
-    }
-
-    void uni_vpmaddubsw(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        if (mayiuse(avx))
-            vpmaddubsw(x1, x2, op);
-        else {
-            if (x1.getIdx() != x2.getIdx()) movdqa(x1, x2);
-            pmaddubsw(x1, op);
-        }
-    }
-    void uni_vpmaddubsw(const Xbyak::Ymm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        vpmaddubsw(x1, x2, op);
-    }
-
-    void uni_vandps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        assert(x1.getIdx() == x2.getIdx());
-        andps(x1, op);
-    }
-    void uni_vandps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        if (!mayiuse(avx512_common) || x1.getBit() < 512)
-            vandps(x1, x2, op);
-        else
-            vpandd(x1, x2, op);
-    }
-
-    void uni_vorps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        assert(x1.getIdx() == x2.getIdx());
-        orps(x1, op);
-    }
-    void uni_vorps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        if (!mayiuse(avx512_common) || x1.getBit() < 512)
-            vorps(x1, x2, op);
-        else
-            vpord(x1, x2, op);
-    }
-
-    void uni_vxorps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        if (x1.getIdx() != x2.getIdx()) { uni_vmovups(x1, x2); }
-        xorps(x1, op);
-    }
-    void uni_vxorps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op = Xbyak::Operand()) {
-        if (!mayiuse(avx512_common) || x1.getBit() < 512)
-            vxorps(x1, x2, op);
-        else
-            vpxord(x1, x2, op);
-    }
-
-    void uni_vpslld(
-            const Xbyak::Xmm &x, const Xbyak::Operand &op, const int imm) {
-        assert(x.isEqualIfNotInherited(op));
-        pslld(x, imm);
-    }
-    void uni_vpslld(
-            const Xbyak::Ymm &x, const Xbyak::Operand &op, const int imm) {
-        vpslld(x, op, imm);
-    }
-
-    void uni_vpsrld(
-            const Xbyak::Xmm &x, const Xbyak::Operand &op, const int imm) {
-        if (!x.isEqualIfNotInherited(op)) uni_vmovups(x, op);
-        psrld(x, imm);
-    }
-    void uni_vpsrld(
-            const Xbyak::Ymm &x, const Xbyak::Operand &op, const int imm) {
-        vpsrld(x, op, imm);
-    }
-
-    void uni_vmaxps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        maxps(x, op2);
-    }
-    void uni_vmaxps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vmaxps(x, op1, op2);
-    }
-
-    void uni_vminps(const Xbyak::Xmm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        assert(x.isEqualIfNotInherited(op1));
-        minps(x, op2);
-    }
-    void uni_vminps(const Xbyak::Ymm &x, const Xbyak::Operand &op1,
-            const Xbyak::Operand &op2 = Xbyak::Operand()) {
-        vminps(x, op1, op2);
-    }
-
-    void uni_vpmovsxbd(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        pmovsxbd(x, op);
-    }
-
-    void uni_vpmovsxbd(const Xbyak::Ymm &y, const Xbyak::Operand &op) {
-        vpmovsxbd(y, op);
-    }
-
-    void uni_vpmovzxbd(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        pmovzxbd(x, op);
-    }
-
-    void uni_vpmovzxbd(const Xbyak::Ymm &y, const Xbyak::Operand &op) {
-        vpmovzxbd(y, op);
-    }
-
-    void uni_vcmpps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op, int cmp_predicate) {
-        if (x1.getIdx() != x2.getIdx()) uni_vmovups(x1, x2);
-        cmpps(x1, op, cmp_predicate);
-    }
-    void uni_vcmpps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op, int cmp_predicate) {
-        vcmpps(x1, x2, op, cmp_predicate);
-    }
-
-    void uni_vtestps(const Xbyak::Xmm &x1, const Xbyak::Operand &op) {
-        ptest(x1, op);
-    }
-
-    void uni_vtestps(const Xbyak::Ymm &x1, const Xbyak::Operand &op) {
-        assert(!(x1.isZMM() || op.isZMM()));
-        vtestps(x1, op);
-    }
-
-    void uni_vblendvps(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op, const Xbyak::Xmm &msk) {
-        assert(x1.getIdx() == x2.getIdx());
-        assert(msk.getIdx() == 0);
-        blendvps(x1, op);
-    }
-    void uni_vblendvps(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op, const Xbyak::Ymm &msk) {
-        vblendvps(x1, x2, op, msk);
-    }
-
-    void uni_vroundps(
-            const Xbyak::Xmm &x, const Xbyak::Operand &op, const int imm) {
-        roundps(x, op, imm);
-    }
-    void uni_vroundps(
-            const Xbyak::Ymm &x, const Xbyak::Operand &op, const int imm) {
-        vroundps(x, op, imm);
-    }
-    void uni_vroundps(
-            const Xbyak::Zmm &x, const Xbyak::Operand &op, const int imm) {
-        vrndscaleps(x, op, imm & 0x3);
-    }
 
-    void uni_vcvtps2dq(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        cvtps2dq(x, op);
+    void uni_fsub(const Xbyak_aarch64::VReg4S &v1,
+            const Xbyak_aarch64::VReg4S &v2, const Xbyak_aarch64::VReg4S &v3) {
+        fsub(v1, v2, v3);
     }
-    void uni_vcvtps2dq(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        vcvtps2dq(x, op);
-    }
-
-    void uni_vcvtdq2ps(const Xbyak::Xmm &x, const Xbyak::Operand &op) {
-        cvtdq2ps(x, op);
-    }
-    void uni_vcvtdq2ps(const Xbyak::Ymm &x, const Xbyak::Operand &op) {
-        vcvtdq2ps(x, op);
-    }
-
-    void uni_vmovmskps(const Xbyak::Reg &x1, const Xbyak::Xmm &x2) {
-        movmskps(x1.cvt64(), x2);
-    }
-    void uni_vmovmskps(const Xbyak::Reg &x1, const Xbyak::Ymm &x2) {
-        vmovmskps(x1, x2);
-    }
-
-    void uni_vmovq(const Xbyak::Xmm &x, const Xbyak::Reg64 &r) {
-        if (mayiuse(avx))
-            vmovq(x, r);
-        else
-            movq(x, r);
-    }
-    void uni_vmovq(const Xbyak::Address &addr, const Xbyak::Xmm &x) {
-        if (mayiuse(avx))
-            vmovq(addr, x);
-        else
-            movq(addr, x);
-    }
-
-    void uni_vpackssdw(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        assert(x1.getIdx() == x1.getIdx());
-        packssdw(x1, op);
-    }
-    void uni_vpackssdw(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vpackssdw(x1, x2, op);
-    }
-
-    void uni_vpackuswb(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op) {
-        assert(x1.getIdx() == x1.getIdx());
-        packuswb(x1, op);
-    }
-    void uni_vpackuswb(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op) {
-        vpackuswb(x1, x2, op);
-    }
-
-    void uni_vpinsrb(const Xbyak::Xmm &x1, const Xbyak::Xmm &x2,
-            const Xbyak::Operand &op, const int imm) {
-        assert(x1.getIdx() == x2.getIdx());
-        pinsrb(x1, op, imm);
-    }
-
-    void uni_vpinsrb(const Xbyak::Ymm &x1, const Xbyak::Ymm &x2,
-            const Xbyak::Operand &op, const int imm) {
-        vpinsrb(x1, x2, op, imm);
-    }
 
-    void uni_vpextrb(
-            const Xbyak::Operand &op, const Xbyak::Xmm &x, const int imm) {
-        pextrb(op, x, imm);
+    void uni_fsub(const Xbyak_aarch64::ZRegS &z1,
+            const Xbyak_aarch64::ZRegS &z2, const Xbyak_aarch64::ZRegS &z3) {
+        fsub(z1, z2, z3);
     }
 
-    void uni_vpextrb(
-            const Xbyak::Operand &op, const Xbyak::Ymm &x, const int imm) {
-        vpextrb(op, x, imm);
+    void uni_eor(const Xbyak_aarch64::VReg &v1, const Xbyak_aarch64::VReg &v2,
+            const Xbyak_aarch64::VReg &v3) {
+        eor(Xbyak_aarch64::VReg16B(v1.getIdx()),
+                Xbyak_aarch64::VReg16B(v2.getIdx()),
+                Xbyak_aarch64::VReg16B(v3.getIdx()));
     }
-
-    void mul_by_const(
-            const Xbyak::Reg &out, const Xbyak::Reg64 &tmp, int value) {
-        // Generates a shift + add sequence for multiplicating contents of the
-        // out register by a known JIT-time value. Clobbers the tmp register.
-        //
-        // Pros compared to mul/imul:
-        // - does not require using known registers
-        // - not microcoded on Intel(R) Xeon Phi(TM) processors
-        // Still, there are probably a lot of cases when mul/imul is faster on
-        // Intel(R) Core(TM) processors. Not intended for critical path.
-
-        // TODO: detect when overflow is emminent (Roma)
-        // TODO: detect when using mul/imul is a better option (Roma)
-
-        int p = 0; // the current power of 2
-        int old_p = 0; // the last seen power of 2 such that value[old_p] != 0
 
-        xor_(tmp, tmp);
-        while (value) {
-            if (value & 1) {
-                int shift = p - old_p;
-                if (shift) {
-                    shl(out, shift);
-                    old_p = p;
-                }
-                add(tmp, out);
-            }
-            value >>= 1;
-            p++;
-        }
-        mov(out, tmp);
+    void uni_eor(const Xbyak_aarch64::ZReg &z1, const Xbyak_aarch64::ZReg &z2,
+            const Xbyak_aarch64::ZReg &z3) {
+        eor(Xbyak_aarch64::ZRegD(z1.getIdx()),
+                Xbyak_aarch64::ZRegD(z2.getIdx()),
+                Xbyak_aarch64::ZRegD(z3.getIdx()));
     }
 
     /*
@@ -1054,8 +220,8 @@ public:
       the floating point register
      */
     template <typename Vmm>
-    void init_saturate_f32(Vmm vmm_lbound, Vmm vmm_ubound, Xbyak::Reg64 reg_tmp,
-            data_type_t idt, data_type_t odt) {
+    void init_saturate_f32(Vmm vmm_lbound, Vmm vmm_ubound,
+            Xbyak_aarch64::XReg reg_tmp, data_type_t idt, data_type_t odt) {
         using namespace data_type;
         if (!((idt == f32) && utils::one_of(odt, u8, s8, s32))) return;
 
@@ -1064,21 +230,26 @@ public:
         // No need to saturate on lower bound for signed integer types, as
         // the conversion to int would return INT_MIN, and then proper
         // saturation will happen in store_data
-        if (odt == u8) uni_vpxor(vmm_lbound, vmm_lbound, vmm_lbound);
+        if (odt == u8) {
+            if (mayiuse(sve_512))
+                dup(Xbyak_aarch64::ZRegS(vmm_lbound.getIdx()), 0);
+            else if (mayiuse(asimd))
+                movi(Xbyak_aarch64::VReg4S(vmm_lbound.getIdx()), 0);
+            else
+                assert(!"unreachable");
+        }
 
-        Xbyak::Xmm tmp(vmm_ubound.getIdx());
+        Xbyak_aarch64::ZRegS z_tmp(vmm_ubound.getIdx());
+        Xbyak_aarch64::WReg w_tmp(reg_tmp.getIdx());
         float saturation_ubound = types::max_value<float>(odt);
-        mov(reg_tmp, float2int(saturation_ubound));
-        uni_vmovq(tmp, reg_tmp);
-        if (vmm_ubound.isYMM() || vmm_ubound.isZMM())
-            uni_vbroadcastss(vmm_ubound, tmp);
-        else
-            uni_vshufps(vmm_ubound, tmp, tmp, 0);
+        mov_imm(w_tmp, float2int(saturation_ubound));
+        dup(z_tmp, w_tmp);
     }
 
     template <typename Vmm>
     void saturate_f32(const Vmm &vmm, const Vmm &vmm_lbound,
-            const Vmm &vmm_ubound, data_type_t odt) {
+            const Vmm &vmm_ubound, data_type_t odt,
+            const Xbyak_aarch64::PReg &p_true) {
         // This function is used to saturate to odt in f32 before converting
         // to s32 in order to avoid bad saturation due to cvtps2dq
         // behavior (it returns INT_MIN if the f32 is out of the
@@ -1086,64 +257,30 @@ public:
         using namespace data_type;
         if (!utils::one_of(odt, u8, s8, s32)) return;
 
+        Xbyak_aarch64::VReg4S v_tmp(vmm.getIdx());
+        Xbyak_aarch64::VReg4S v_lbound(vmm_lbound.getIdx());
+        Xbyak_aarch64::VReg4S v_ubound(vmm_ubound.getIdx());
+        Xbyak_aarch64::ZRegS z_tmp(vmm.getIdx());
+        Xbyak_aarch64::ZRegS z_lbound(vmm_lbound.getIdx());
+        Xbyak_aarch64::ZRegS z_ubound(vmm_ubound.getIdx());
+
         // no need to apply lower saturation bound when odt is
         // signed, as cvtps2dq will return MIN_INT if the value
         // does not fit
         if (odt == u8) {
-            if (mayiuse(avx))
-                vmaxps(vmm, vmm, vmm_lbound);
+            if (mayiuse(sve_512))
+                fmax(z_tmp, p_true / Xbyak_aarch64::T_m, z_lbound);
+            else if (mayiuse(asimd))
+                fmax(v_tmp, v_tmp, v_lbound);
             else
-                maxps(vmm, vmm_lbound);
+                assert(!"unreachable");
         }
-        if (mayiuse(avx))
-            vminps(vmm, vmm, vmm_ubound);
+        if (mayiuse(sve_512))
+            fmin(z_tmp, p_true / Xbyak_aarch64::T_m, z_ubound);
+        else if (mayiuse(asimd))
+            fmin(v_tmp, v_tmp, v_ubound);
         else
-            minps(vmm, vmm_ubound);
-    }
-
-    void dump_code32(const Xbyak::XBYAK_CODE_PTR *code) const {
-        if (code) {
-            static int counter = 0;
-#define MAX_FNAME_LEN 256
-            char fname[MAX_FNAME_LEN + 1];
-            snprintf(fname, MAX_FNAME_LEN, "dnnl_dump_%s.%d.bin", name(),
-                    counter);
-            counter++;
-
-            FILE *fp = fopen(fname, "w+");
-            // Failure to dump code is not fatal
-            if (fp) {
-#ifdef DNNL_INDIRECT_JIT_AARCH64
-                size_t unused = fwrite(code, getSize() * 4, 1, fp);
-#else
-                size_t unused = fwrite(code, getSize(), 1, fp);
-#endif
-                UNUSED(unused);
-                fclose(fp);
-            }
-        }
-#undef MAX_FNAME_LEN
-    }
-
-    void dump_code(const Xbyak::uint8 *code) const {
-        if (code) {
-            static int counter = 0;
-#define MAX_FNAME_LEN 256
-            char fname[MAX_FNAME_LEN + 1];
-            snprintf(fname, MAX_FNAME_LEN, "dnnl_dump_%s.%d.bin", name(),
-                    counter);
-            counter++;
-
-            FILE *fp = fopen(fname, "w+");
-
-            // Failure to dump code is not fatal
-            if (fp) {
-                size_t unused = fwrite(code, getSize() * 4, 1, fp);
-                UNUSED(unused);
-                fclose(fp);
-            }
-        }
-#undef MAX_FNAME_LEN
+            assert(!"unreachable");
     }
 
     DNNL_DISALLOW_COPY_AND_ASSIGN(jit_generator);
@@ -1151,38 +288,50 @@ public:
 public:
     jit_generator(void *code_ptr = nullptr, size_t code_size = MAX_CODE_SIZE,
             bool use_autogrow = true)
-        : Xbyak::CodeGenerator(code_size, code_ptr) {}
-#if 0
-                (code_ptr == nullptr && use_autogrow) ? Xbyak::Xbyak_aarch64::AutoGrow
-                                                      : code_ptr) {}
-#endif
+        : Xbyak_aarch64::CodeGenerator(code_size, code_ptr) {}
     virtual ~jit_generator() {}
 
     virtual const char *name() const = 0;
     virtual const char *source_file() const = 0;
 
-    const uint32_t *getCode32() {
+    void register_jit_code(const uint8_t *code, size_t code_size) const {
+        jit_utils::register_jit_code(code, code_size, name(), source_file());
+    }
+
+    const uint8_t *jit_ker() const { return jit_ker_; }
+
+    template <typename... kernel_args_t>
+    void operator()(kernel_args_t... args) const {
+        using jit_kernel_func_t = void (*)(const kernel_args_t... args);
+        auto *fptr = (jit_kernel_func_t)jit_ker_;
+        (*fptr)(std::forward<kernel_args_t>(args)...);
+    }
+
+    virtual status_t create_kernel() {
+        generate();
+        jit_ker_ = getCode();
+        return (jit_ker_) ? status::success : status::runtime_error;
+    }
+
+private:
+    const uint8_t *getCode() {
         this->ready();
-        const uint32_t *code = CGA64::getCode32();
-
-        if (get_jit_dump()) dump_code32(code);
-
+        if (!is_initialized()) return nullptr;
+        const uint8_t *code
+                = reinterpret_cast<const uint8_t *>(CodeGenerator::getCode());
+        register_jit_code(code, getSize());
         return code;
     }
 
-    // XXX: use normal_case name and update all callees (?)
-    const Xbyak::uint8 *getCode() {
-        const Xbyak::uint8 *code = CodeGenerator::getCode();
-
-        if (get_jit_dump()) dump_code(code);
-
-        return code;
+    static inline bool is_initialized() {
+        /* At the moment, Xbyak_aarch64 does not have GetError()\
+         so that return dummy result. */
+        return true;
     }
 
-    template <typename F>
-    const F getCode() {
-        return (const F)getCode32();
-    }
+protected:
+    virtual void generate() = 0;
+    const uint8_t *jit_ker_ = nullptr;
 };
 
 } // namespace aarch64

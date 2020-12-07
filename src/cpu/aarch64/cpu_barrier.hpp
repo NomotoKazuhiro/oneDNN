@@ -1,5 +1,6 @@
 /*******************************************************************************
-* Copyright 2017-2020 Intel Corporation
+* Copyright 2020 Intel Corporation
+* Copyright 2020 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -29,15 +30,11 @@ namespace aarch64 {
 
 namespace simple_barrier {
 
-#ifdef _WIN32
-#define CTX_ALIGNMENT 64
-#else
 #define CTX_ALIGNMENT 4096
-#endif
 
 STRUCT_ALIGN(
         CTX_ALIGNMENT, struct ctx_t {
-            enum { CACHE_LINE_SIZE = 64 };
+            enum { CACHE_LINE_SIZE = 256 };
             volatile size_t ctr;
             char pad1[CACHE_LINE_SIZE - 1 * sizeof(size_t)];
             volatile size_t sense;
@@ -52,14 +49,18 @@ STRUCT_ALIGN(
  * Batch normalization (that creates C / simd_w barriers) degrades with page
  * alignment due to significant overhead of ctx_init in case of mb=1. */
 STRUCT_ALIGN(
-        64, struct ctx_64_t {
-            enum { CACHE_LINE_SIZE = 64 };
+        256, struct ctx_64_t {
+            enum { CACHE_LINE_SIZE = 256 };
             volatile size_t ctr;
             char pad1[CACHE_LINE_SIZE - 1 * sizeof(size_t)];
             volatile size_t sense;
             char pad2[CACHE_LINE_SIZE - 1 * sizeof(size_t)];
         });
 
+template <typename ctx_t>
+inline void ctx_init(ctx_t *ctx) {
+    *ctx = utils::zero<ctx_t>();
+}
 void barrier(ctx_t *ctx, int nthr);
 
 /** injects actual barrier implementation into another jitted code
@@ -68,42 +69,8 @@ void barrier(ctx_t *ctx, int nthr);
  *   reg_ctx   -- read-only register with pointer to the barrier context
  *   reg_nnthr -- read-only register with the # of synchronizing threads
  */
-void generate(jit_generator &code, Xbyak::Reg64 reg_ctx, Xbyak::Reg64 reg_nthr);
-
-/** jit barrier generator */
-struct jit_t : public jit_generator {
-private:
-    using reg64_t = const Xbyak::Xbyak_aarch64::XReg;
-
-    reg64_t reg_tmp = x28;
-    reg64_t reg_tmp_imm = x29;
-    reg64_t reg_tmp_ofs = x30;
-
-    /** injects actual barrier implementation into another jitted code
-     * @params:
-     *   reg_ctx   -- read-only register with pointer to the barrier context
-     *   reg_nnthr -- read-only register with the # of synchronizing threads
-     */
-    //void generate(Xbyak::Xbyak_aarch64::XReg reg_ctx, Xbyak::Xbyak_aarch64::XReg reg_nthr);
-
-public:
-    void (*barrier)(ctx_t *ctx, size_t nthr);
-
-    jit_t() {
-        this->preamble();
-        generate(*this, abi_param1, abi_param2);
-        this->postamble();
-        barrier = reinterpret_cast<decltype(barrier)>(
-                const_cast<uint32_t *>(this->getCode32()));
-    }
-
-    DECLARE_CPU_JIT_AUX_FUNCTIONS(jit_t)
-};
-
-template <typename ctx_t>
-inline void ctx_init(ctx_t *ctx) {
-    *ctx = utils::zero<ctx_t>();
-}
+void generate(jit_generator &code, Xbyak_aarch64::XReg reg_ctx,
+        Xbyak_aarch64::XReg reg_nthr);
 
 } // namespace simple_barrier
 
