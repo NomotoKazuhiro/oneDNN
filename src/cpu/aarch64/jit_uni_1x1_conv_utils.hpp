@@ -305,7 +305,7 @@ struct rtus_driver_t : public jit_generator {
         mov(reg_cur_src, reg_src);
         mov(reg_cur_iw, reg_iw_start);
 
-        if (isa == avx512_common) {
+        if (isa == avx512_common || isa == sve) {
             push(rcx); // preserve rcx, used for shift
             mov(reg_icb_remainder, reg_icb);
             and_(reg_icb_remainder,
@@ -367,7 +367,7 @@ struct rtus_driver_t : public jit_generator {
         const size_t w_step_factor = ic_ * typesize_;
         const size_t max_load_store_bytes = typesize_ == 4 ? 32 : 16;
         const size_t load_store_size
-                = isa == avx512_common ? vlen_ : max_load_store_bytes;
+                = isa == avx512_common || isa == sve ? vlen_ : max_load_store_bytes;
         size_t load_store_tail_size = (typesize_ == 1 ? max_load_store_bytes
                                                       : ic_tail_ * typesize_);
 
