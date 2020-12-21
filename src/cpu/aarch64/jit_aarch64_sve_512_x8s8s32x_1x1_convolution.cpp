@@ -1,21 +1,6 @@
 /*******************************************************************************
-* Copyright 2019-2020 FUJITSU LIMITED
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*******************************************************************************/
-
-/*******************************************************************************
 * Copyright 2018-2020 Intel Corporation
+* Copyright 2020 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -39,6 +24,8 @@
 
 #include "cpu/aarch64/jit_aarch64_sve_512_x8s8s32x_1x1_convolution.hpp"
 
+#include "cpu/cpu_primitive.hpp"
+
 namespace dnnl {
 namespace impl {
 namespace cpu {
@@ -50,7 +37,7 @@ using namespace dnnl::impl::utils;
 
 /* convolution forward */
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
+status_t jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
         dst_type>::execute_forward(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
@@ -61,12 +48,16 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
     auto bias_dw = CTX_IN_MEM(
             const char *, DNNL_ARG_ATTR_POST_OP_DW | DNNL_ARG_BIAS);
 
+    DEFINE_ZERO_POINTS_BUFFER(src_zero_point, DNNL_ARG_SRC);
+    DEFINE_ZERO_POINTS_BUFFER(dst_zero_point, DNNL_ARG_DST);
+
     auto scratchpad = ctx.get_scratchpad_grantor();
 
     parallel(pd()->jcp_.nthr, [&](const int ithr, const int nthr) {
         execute_forward_thr(ithr, nthr, src, weights, bias, weights_dw, bias_dw,
-                dst, scratchpad);
+                dst, src_zero_point, dst_zero_point, scratchpad);
     });
+    return status::success;
 }
 
 template <data_type_t src_type, data_type_t dst_type>
@@ -74,6 +65,7 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
         dst_type>::execute_forward_thr(const int ithr, const int nthr,
         const src_data_t *src, const wei_data_t *weights, const char *bias,
         const wei_data_t *weights_dw, const char *bias_dw, dst_data_t *dst,
+        const int32_t *src_zero_point, const int32_t *dst_zero_point,
         const memory_tracking::grantor_t &scratchpad) const {
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
@@ -89,7 +81,7 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
 
     auto rtus_space = pd()->rtus_.reduce_src_
             ? scratchpad.get<src_data_t>(key_conv_rtus_space)
-            : NULL;
+            : nullptr;
 
     //    auto local_scales = scratchpad.get<float>(key_conv_adjusted_scales);
 
@@ -107,12 +99,17 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
 
     auto offset = weights_d.size() - weights_d.additional_buffer_size();
     wei_data_t *w = const_cast<wei_data_t *>(weights);
-    int32_t *compensation
-            = (!jcp.signed_input) ? reinterpret_cast<int32_t *>(w + offset) : 0;
+    const int32_t *compensation = (!jcp.signed_input)
+            ? reinterpret_cast<int32_t *>(w + offset)
+            : nullptr;
+    const int32_t *zp_compensation = jcp.src_zero_point
+            ? reinterpret_cast<int32_t *>(&w[offset])
+                    + (!jcp.signed_input ? jcp.ngroups * jcp.oc : 0)
+            : nullptr;
 
     auto p = jit_1x1_conv_call_s();
 
-    auto rp = rtus_driver_t<sve>::call_params_t();
+    auto rp = rtus_driver_t<sve_512>::call_params_t();
     const int nb_oc = jcp.nb_load;
     const int nb_ic = jcp.nb_reduce;
     // override some constants for fused dw_conv
@@ -143,7 +140,7 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
         w = const_cast<wei_data_t *>(weights_dw);
         compensation_dw = (!jcp_dw->signed_input)
                 ? reinterpret_cast<int32_t *>(w + offset)
-                : 0;
+                : nullptr;
         dw_oscales = dw_pd->attr()->output_scales_.scales_;
     }
 
@@ -216,8 +213,14 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
                 = &weights[pd()->with_groups() ? weights_d.blk_off(g, ocb, icb)
                                                : weights_d.blk_off(ocb, icb)];
         p.bias_data = &bias[_ocb * jcp.oc_block * bia_dt_size];
-        p.compensation
-                = (!jcp.signed_input) ? &compensation[_ocb * jcp.oc_block] : 0;
+        p.compensation = (!jcp.signed_input)
+                ? &compensation[_ocb * jcp.oc_block]
+                : nullptr;
+        p.zp_compensation = jcp.src_zero_point
+                ? zp_compensation + _ocb * jcp.oc_block
+                : nullptr;
+        p.src_zero_point = jcp.src_zero_point ? src_zero_point : nullptr;
+        p.dst_zero_point = jcp.dst_zero_point ? dst_zero_point : nullptr;
         p.scales = &oscales[jcp.is_oc_scale * _ocb * jcp.oc_block];
         const size_t src_off = is_3d
                 ? src_d.blk_off(n, _icb * jcp.ic_block, id, ih, iw)
@@ -228,13 +231,13 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
                     + _icb * jcp.is * jcp.ic_block;
             if (ocb == ocb_start) {
                 rp.src = src + src_off;
-                rtus_driver_->ker_(&rp);
+                (*rtus_driver_)(&rp);
             }
             p.bcast_data = rp.ws;
         } else
             p.bcast_data = src + src_off;
 
-        kernel_->jit_ker(&p);
+        (*kernel_)(&p);
     };
 
     auto conv_1x1 = [&](int bcast_start, int bcast_end, int ocb_start,
@@ -353,7 +356,7 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_convolution_fwd_t<src_type,
                     ? &dw_oscales[jcp_dw->is_oc_scale * ocb * jcp_dw->ch_block]
                     : nullptr;
 
-            kernel_dw_->jit_ker(&par_conv_dw);
+            (*kernel_dw_)(&par_conv_dw);
 
             for (int i = 0; i < jcp_dw->kh; ++i)
                 addrs[i] += src_ch_stride;

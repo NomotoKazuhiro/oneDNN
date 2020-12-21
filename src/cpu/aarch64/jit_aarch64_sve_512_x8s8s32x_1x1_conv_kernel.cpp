@@ -1,21 +1,6 @@
 /*******************************************************************************
-* Copyright 2019-2020 FUJITSU LIMITED
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*******************************************************************************/
-
-/*******************************************************************************
 * Copyright 2018-2020 Intel Corporation
+* Copyright 2020 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -54,12 +39,8 @@ namespace aarch64 {
 
 using namespace dnnl::impl::utils;
 using namespace dnnl::impl::data_type;
-using namespace Xbyak;
 
-#define CGA64 CodeGeneratorAArch64
-namespace xa = Xbyak::Xbyak_aarch64;
-
-#define SVE_compress_addr(base, offt) xa::ptr(get_comp_addr_reg(base, offt))
+#define SVE_compress_addr(base, offt) ptr(get_comp_addr_reg(base, offt))
 
 template <typename Vmm>
 bool _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::maybe_eltwise(
@@ -81,20 +62,19 @@ bool _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::maybe_eltwise(
 template <typename Vmm>
 void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
         int load_loop_blk) {
-    CGA64::mov(aux1_reg_bcast_data, reg_bcast_data);
-    CGA64::mov(aux_reg_bcast_data, reg_bcast_data);
+    mov(aux1_reg_bcast_data, reg_bcast_data);
+    mov(aux_reg_bcast_data, reg_bcast_data);
 
-    CGA64::mov(aux_reg_output_data, reg_output_data);
-    CGA64::ldr(
-            bcast_loop_iter, SVE_compress_addr(reg_rsp, bcast_loop_work_off));
+    mov(aux_reg_output_data, reg_output_data);
+    ldr(bcast_loop_iter, SVE_compress_addr(reg_rsp, bcast_loop_work_off));
 
-    xa::LabelAArch64 bcast_loop;
-    xa::LabelAArch64 bcast_loop_tail;
+    Label bcast_loop;
+    Label bcast_loop_tail;
 
-    CGA64::cmp(bcast_loop_iter, jcp.ur);
-    CGA64::b(xa::LT, bcast_loop_tail);
+    cmp(bcast_loop_iter, jcp.ur);
+    b(LT, bcast_loop_tail);
 
-    CGA64::L_aarch64(bcast_loop);
+    L(bcast_loop);
     {
         assert(jcp.bcast_block % jcp.ur == 0);
         int num_substeps = jcp.bcast_block / jcp.ur;
@@ -102,12 +82,12 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
         for (int i = 0; i < num_substeps; i++) {
             reduce_loop(load_loop_blk, jcp.ur, i, false);
             if (i < num_substeps - 1) {
-                CGA64::add_imm(aux1_reg_bcast_data, aux1_reg_bcast_data,
+                add_imm(aux1_reg_bcast_data, aux1_reg_bcast_data,
                         jcp.bcast_loop_bcast_substep, reg_tmp0_imm);
-                CGA64::add_imm(aux_reg_output_data, aux_reg_output_data,
+                add_imm(aux_reg_output_data, aux_reg_output_data,
                         jcp.bcast_loop_output_substep, reg_tmp0_imm);
             } else {
-                CGA64::add_imm(aux1_reg_bcast_data, aux1_reg_bcast_data,
+                add_imm(aux1_reg_bcast_data, aux1_reg_bcast_data,
                         jcp.bcast_loop_bcast_step
                                 - (num_substeps - 1)
                                         * jcp.bcast_loop_bcast_substep,
@@ -115,22 +95,22 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::bcast_loop(
                 int output_offset = jcp.bcast_loop_output_step
                         - (num_substeps - 1) * jcp.bcast_loop_output_substep;
 
-                CGA64::add_imm(aux_reg_output_data, aux_reg_output_data,
-                        output_offset, reg_tmp0_imm);
+                add_imm(aux_reg_output_data, aux_reg_output_data, output_offset,
+                        reg_tmp0_imm);
             }
         }
-        CGA64::subs(bcast_loop_iter, bcast_loop_iter, jcp.bcast_block);
-        CGA64::cmp(bcast_loop_iter, jcp.bcast_block);
-        CGA64::b(xa::GE, bcast_loop);
+        subs(bcast_loop_iter, bcast_loop_iter, jcp.bcast_block);
+        cmp(bcast_loop_iter, jcp.bcast_block);
+        b(GE, bcast_loop);
     }
 
-    CGA64::L_aarch64(bcast_loop_tail);
+    L(bcast_loop_tail);
     if (jcp.ur_tail) {
-        xa::LabelAArch64 bcast_loop_tail_out;
-        CGA64::cmp(bcast_loop_iter, 0);
-        CGA64::b(xa::EQ, bcast_loop_tail_out);
+        Label bcast_loop_tail_out;
+        cmp(bcast_loop_iter, 0);
+        b(EQ, bcast_loop_tail_out);
         reduce_loop(load_loop_blk, jcp.ur_tail, 0, true);
-        CGA64::L_aarch64(bcast_loop_tail_out);
+        L(bcast_loop_tail_out);
     }
 }
 
@@ -152,54 +132,51 @@ template <typename Vmm>
 void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         int load_loop_blk, int ur, int substep, bool wraparound) {
     auto vreg_load
-            = [=](int i_load) { return xa::ZReg(ur * load_loop_blk + i_load); };
+            = [=](int i_load) { return ZReg(ur * load_loop_blk + i_load); };
 
     auto vreg_accum = [=](int i_load, int i_ur) {
-        return xa::ZReg(i_ur * load_loop_blk + i_load);
+        return ZReg(i_ur * load_loop_blk + i_load);
     };
 
-    auto bias_ptr = [=](xa::ZReg bias_reg, int i_load, bool mask_flag) {
+    auto bias_ptr = [=](ZReg bias_reg, int i_load, bool mask_flag) {
         int offt = get_offset(jcp.typesize_bia * jcp.oc_block * i_load);
 
-        CGA64::add_imm(reg_tmp0_adr, reg_bias_data, offt, reg_tmp0_imm);
+        add_imm(reg_tmp0_adr, reg_bias_data, offt, reg_tmp0_imm);
         if (mask_flag)
-            CGA64::ld1w(
-                    bias_reg.s, ktail_mask / xa::T_z, xa::ptr(reg_tmp0_adr));
+            ld1w(bias_reg.s, ktail_mask / T_z, ptr(reg_tmp0_adr));
         else
-            CGA64::ldr(bias_reg, xa::ptr(reg_tmp0_adr));
+            ldr(bias_reg, ptr(reg_tmp0_adr));
     };
 
-    auto bias_ptr8 = [=](xa::ZReg bias_reg, int i_load, bool mask_flag) {
+    auto bias_ptr8 = [=](ZReg bias_reg, int i_load, bool mask_flag) {
         int offt = get_offset(jcp.typesize_bia * jcp.oc_block * i_load);
 
-        CGA64::add_imm(reg_tmp0_adr, reg_bias_data, offt, reg_tmp0_imm);
+        add_imm(reg_tmp0_adr, reg_bias_data, offt, reg_tmp0_imm);
         if (mask_flag) {
-            CGA64::uzp1(ktail_load_mask.h, ktail_mask.h, mask_all_zero.h);
-            CGA64::uzp1(ktail_load_mask.b, ktail_load_mask.b, mask_all_zero.b);
-            CGA64::ld1b(bias_reg.b, ktail_load_mask / xa::T_z,
-                    xa::ptr(reg_tmp0_adr));
+            uzp1(ktail_load_mask.h, ktail_mask.h, mask_all_zero.h);
+            uzp1(ktail_load_mask.b, ktail_load_mask.b, mask_all_zero.b);
+            ld1b(bias_reg.b, ktail_load_mask / T_z, ptr(reg_tmp0_adr));
         } else {
-            CGA64::ldr(xa::QReg(bias_reg.getIdx()), xa::ptr(reg_tmp0_adr));
+            ldr(QReg(bias_reg.getIdx()), ptr(reg_tmp0_adr));
         }
     };
 
-    auto comp_ptr = [=](xa::ZReg comp_reg, int i_load, bool mask_flag) {
+    auto comp_ptr = [=](ZReg comp_reg, int i_load, bool mask_flag) {
         int offt = get_offset(sizeof(int32_t) * jcp.oc_block * i_load);
 
-        CGA64::add_imm(reg_tmp0_adr, reg_comp_data, offt, reg_tmp0_imm);
+        add_imm(reg_tmp0_adr, reg_comp_data, offt, reg_tmp0_imm);
         if (mask_flag)
-            CGA64::ld1w(
-                    comp_reg.s, ktail_mask / xa::T_z, xa::ptr(reg_tmp0_adr));
+            ld1w(comp_reg.s, ktail_mask / T_z, ptr(reg_tmp0_adr));
         else
-            CGA64::ldr(comp_reg, xa::ptr(reg_tmp0_adr));
+            ldr(comp_reg, ptr(reg_tmp0_adr));
     };
 
-    auto scale_ptr = [=](xa::ZReg scale_reg, int i_load) {
+    auto scale_ptr = [=](ZReg scale_reg, int i_load) {
         int ofs = get_offset(
                 jcp.is_oc_scale * (sizeof(float) * jcp.oc_block * i_load));
 
         if (ofs == 0) {
-            CGA64::ldr(scale_reg, xa::ptr(reg_ptr_scales));
+            ldr(scale_reg, ptr(reg_ptr_scales));
         } else {
             auto reg_tmp_adr = ((i_load % 4) == 0) ? reg_tmp0_adr
                                                    : ((i_load % 4) == 1)
@@ -209,13 +186,12 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                                                    : ((i_load % 4) == 1)
                             ? reg_tmp1_imm
                             : ((i_load % 4) == 2) ? reg_tmp2_imm : reg_tmp3_imm;
-            CGA64::add_imm(reg_tmp_adr, reg_ptr_scales, ofs, reg_tmp_imm);
-            CGA64::ldr(scale_reg, xa::ptr(reg_tmp_adr));
+            add_imm(reg_tmp_adr, reg_ptr_scales, ofs, reg_tmp_imm);
+            ldr(scale_reg, ptr(reg_tmp_adr));
         }
     };
 
-    auto bcast_ptr = [=](xa::ZReg bcast_reg, int i_reduce, int i_ur,
-                             bool bcast) {
+    auto bcast_ptr = [=](ZReg bcast_reg, int i_reduce, int i_ur, bool bcast) {
         assert(i_ur < jcp.ur);
         assert(i_reduce <= jcp.reduce_loop_unroll);
         assert(jcp.reduce_loop_unroll == jcp.reduce_block);
@@ -232,10 +208,8 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
             assert(!"unimplemented");
         else {
             if ((-0x40 <= ofs) && (ofs < 0x40) && ((ofs % 4) == 0))
-                CGA64::ld1rw(xa::ZRegS(bcast_reg.getIdx()),
-                        xa::PReg(vmask.getIdx()),
-                        xa::ptr(xa::XReg(base.getIdx()),
-                                static_cast<int32_t>(ofs)));
+                ld1rw(ZRegS(bcast_reg.getIdx()), PReg(vmask.getIdx()),
+                        ptr(XReg(base.getIdx()), static_cast<int32_t>(ofs)));
             else {
                 auto reg_tmp_adr = ((i_ur % 4) == 0)
                         ? reg_tmp0_adr
@@ -247,15 +221,14 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                         : ((i_ur % 4) == 1) ? reg_tmp1_imm
                                             : ((i_ur % 4) == 2) ? reg_tmp2_imm
                                                                 : reg_tmp3_imm;
-                CGA64::add_imm(
-                        reg_tmp_adr, xa::XReg(base.getIdx()), ofs, reg_tmp_imm);
-                CGA64::ld1rw(xa::ZRegS(bcast_reg.getIdx()),
-                        xa::PReg(vmask.getIdx()), xa::ptr(reg_tmp_adr));
+                add_imm(reg_tmp_adr, XReg(base.getIdx()), ofs, reg_tmp_imm);
+                ld1rw(ZRegS(bcast_reg.getIdx()), PReg(vmask.getIdx()),
+                        ptr(reg_tmp_adr));
             }
         }
     };
 
-    auto load_ptr = [=](xa::ZReg load_reg, int i_reduce, int i_load) {
+    auto load_ptr = [=](ZReg load_reg, int i_reduce, int i_load) {
         int u0 = i_reduce % jcp.reduce_loop_unroll;
         int u1 = i_reduce / jcp.reduce_loop_unroll;
 
@@ -264,7 +237,7 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                 u1 * jcp.reduce_loop_load_step + jcp.typesize_in * offt);
 
         if (ofs == 0) {
-            CGA64::ldr(load_reg, xa::ptr(aux_reg_load_data));
+            ldr(load_reg, ptr(aux_reg_load_data));
         } else {
             auto reg_tmp_adr = ((i_load % 4) == 0) ? reg_tmp0_adr
                                                    : ((i_load % 4) == 1)
@@ -274,12 +247,12 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                                                    : ((i_load % 4) == 1)
                             ? reg_tmp1_imm
                             : ((i_load % 4) == 2) ? reg_tmp2_imm : reg_tmp3_imm;
-            CGA64::add_imm(reg_tmp_adr, aux_reg_load_data, ofs, reg_tmp_imm);
-            CGA64::ldr(load_reg, xa::ptr(reg_tmp_adr));
+            add_imm(reg_tmp_adr, aux_reg_load_data, ofs, reg_tmp_imm);
+            ldr(load_reg, ptr(reg_tmp_adr));
         }
     };
 
-    auto output_ptr = [=](xa::ZReg output_reg, int i_load, int i_ur,
+    auto output_ptr = [=](ZReg output_reg, int i_load, int i_ur,
                               bool mask_flag) {
         const size_t ur_stride = jcp.with_dw_conv
                 ? jcp.nb_load_blocking * jcp.oc_block * i_ur
@@ -288,15 +261,14 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         int offt = get_offset(
                 jcp.typesize_out * (ur_stride + i_load * jcp.load_block));
 
-        CGA64::add_imm(reg_tmp0_adr, aux_reg_output_data, offt, reg_tmp0_imm);
+        add_imm(reg_tmp0_adr, aux_reg_output_data, offt, reg_tmp0_imm);
         if (mask_flag)
-            CGA64::ld1w(
-                    output_reg.s, ktail_mask / xa::T_z, xa::ptr(reg_tmp0_adr));
+            ld1w(output_reg.s, ktail_mask / T_z, ptr(reg_tmp0_adr));
         else
-            CGA64::ldr(output_reg, xa::ptr(reg_tmp0_adr));
+            ldr(output_reg, ptr(reg_tmp0_adr));
     };
 
-    auto output_ptr8 = [=](xa::ZReg output_reg, int i_load, int i_ur,
+    auto output_ptr8 = [=](ZReg output_reg, int i_load, int i_ur,
                                bool mask_flag) {
         const size_t ur_stride = jcp.with_dw_conv
                 ? jcp.nb_load_blocking * jcp.oc_block * i_ur
@@ -305,14 +277,13 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         int offt = get_offset(
                 jcp.typesize_out * (ur_stride + i_load * jcp.load_block));
 
-        CGA64::add_imm(reg_tmp0_adr, aux_reg_output_data, offt, reg_tmp0_imm);
+        add_imm(reg_tmp0_adr, aux_reg_output_data, offt, reg_tmp0_imm);
         if (mask_flag) {
-            CGA64::uzp1(ktail_load_mask.h, ktail_mask.h, mask_all_zero.h);
-            CGA64::uzp1(ktail_load_mask.b, ktail_load_mask.b, mask_all_zero.b);
-            CGA64::ld1b(output_reg.b, ktail_load_mask / xa::T_z,
-                    xa::ptr(reg_tmp0_adr));
+            uzp1(ktail_load_mask.h, ktail_mask.h, mask_all_zero.h);
+            uzp1(ktail_load_mask.b, ktail_load_mask.b, mask_all_zero.b);
+            ld1b(output_reg.b, ktail_load_mask / T_z, ptr(reg_tmp0_adr));
         } else {
-            CGA64::ldr(xa::QReg(output_reg.getIdx()), xa::ptr(reg_tmp0_adr));
+            ldr(QReg(output_reg.getIdx()), ptr(reg_tmp0_adr));
         }
     };
 
@@ -320,12 +291,12 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         for (int i_load = 0; i_load < load_loop_blk; ++i_load)
             for (int i_ur = 0; i_ur < ur; ++i_ur) {
                 auto r = vreg_accum(i_load, i_ur);
-                CGA64::eor(r.d, r.d, r.d);
+                eor(r.d, r.d, r.d);
             }
         if (!jcp.signed_input) {
             //mov(reg_scratch, -128);
             //vpbroadcastb(vmm_shift, reg_scratch.cvt8());
-            CGA64::dup(vmm_shift.b, -128);
+            dup(vmm_shift.b, -128);
         }
     };
 
@@ -334,22 +305,27 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         const int sum_idx = p.find(primitive_kind::sum);
         const float *p_sum_scale = nullptr;
         if (sum_idx != -1) p_sum_scale = &p.entry_[sum_idx].sum.scale;
-        CGA64::str(
-                reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
-        CGA64::ldr(reg_ptr_scales,
-                SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
+        str(reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
+        ldr(reg_ptr_scales, SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
         if (p_sum_scale && *p_sum_scale != 1.f) {
-            CGA64::str(reg_load_data,
-                    SVE_compress_addr(reg_rsp, reg_load_data_off));
-            CGA64::mov_imm(reg_ptr_sum_scale, (size_t)p_sum_scale);
+            str(reg_load_data, SVE_compress_addr(reg_rsp, reg_load_data_off));
+            mov_imm(reg_ptr_sum_scale, (size_t)p_sum_scale);
         }
+#if 0
+        if (jcp.src_zero_point) {
+            ldr(reg_zp_compensation,
+                    SVE_compress_addr(reg_rsp, reg_zp_compensation_off));
+            ldr(reg_src_zero_point,
+                    SVE_compress_addr(reg_rsp, reg_src_zero_point_off));
+        }
+#endif
         for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
             const bool mask_flag = mask_flag_in && i_load == load_loop_blk - 1;
             auto vmm_bias = vmm_tmp;
             auto vmm_comp = vmm_bcast;
             if (jcp.with_bias) {
                 if (!jcp.signed_input)
-                    CGA64::ldr(reg_bias_data,
+                    ldr(reg_bias_data,
                             SVE_compress_addr(reg_rsp, reg_bias_data_off));
                 //cvt2ps(jcp.bia_dt, vmm_bias, bias_ptr(i_load), mask_flag);
                 switch (jcp.bia_dt) {
@@ -358,71 +334,88 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                         bias_ptr(vmm_bias, i_load, mask_flag);
                         break;
                     case data_type::s8:
-                        CGA64::sub(x22, x22, 64);
-                        CGA64::str(xa::ZReg(29), xa::ptr(x22));
-                        bias_ptr8(xa::ZReg(29), i_load, mask_flag);
-                        CGA64::zip1(
-                                xa::ZRegB(29), xa::ZRegB(29), xa::ZRegB(29));
-                        CGA64::zip1(
-                                xa::ZRegH(29), xa::ZRegH(29), xa::ZRegH(29));
-                        CGA64::sxtb(xa::ZRegS(vmm_bias.getIdx()),
-                                vmask / xa::T_m, xa::ZRegS(29));
+                        sub(x22, x22, 64);
+                        str(ZReg(29), ptr(x22));
+                        bias_ptr8(ZReg(29), i_load, mask_flag);
+                        zip1(ZRegB(29), ZRegB(29), ZRegB(29));
+                        zip1(ZRegH(29), ZRegH(29), ZRegH(29));
+                        sxtb(ZRegS(vmm_bias.getIdx()), vmask / T_m, ZRegS(29));
                         if (mask_flag) {
-                            CGA64::not_(mask_tmp.b, vmask.b, ktail_mask.b);
-                            CGA64::mov(vmm_bias.s, mask_tmp / xa::T_m, 0);
+                            not_(mask_tmp.b, vmask.b, ktail_mask.b);
+                            mov(vmm_bias.s, mask_tmp / T_m, 0);
                         }
-                        CGA64::ldr(xa::ZReg(29), xa::ptr(x22));
-                        CGA64::add(x22, x22, 64);
+                        ldr(ZReg(29), ptr(x22));
+                        add(x22, x22, 64);
                         break;
                     case data_type::u8:
-                        CGA64::sub(x22, x22, 64);
-                        CGA64::str(xa::ZReg(29), xa::ptr(x22));
-                        bias_ptr8(xa::ZReg(29), i_load, mask_flag);
-                        CGA64::zip1(
-                                xa::ZRegB(29), xa::ZRegB(29), xa::ZRegB(29));
-                        CGA64::zip1(
-                                xa::ZRegH(29), xa::ZRegH(29), xa::ZRegH(29));
-                        CGA64::uxtb(xa::ZRegS(vmm_bias.getIdx()),
-                                vmask / xa::T_m, xa::ZRegS(29));
+                        sub(x22, x22, 64);
+                        str(ZReg(29), ptr(x22));
+                        bias_ptr8(ZReg(29), i_load, mask_flag);
+                        zip1(ZRegB(29), ZRegB(29), ZRegB(29));
+                        zip1(ZRegH(29), ZRegH(29), ZRegH(29));
+                        uxtb(ZRegS(vmm_bias.getIdx()), vmask / T_m, ZRegS(29));
                         if (mask_flag) {
-                            CGA64::not_(mask_tmp.b, vmask.b, ktail_mask.b);
-                            CGA64::mov(vmm_bias.s, mask_tmp / xa::T_m, 0);
+                            not_(mask_tmp.b, vmask.b, ktail_mask.b);
+                            mov(vmm_bias.s, mask_tmp / T_m, 0);
                         }
-                        CGA64::ldr(xa::ZReg(29), xa::ptr(x22));
-                        CGA64::add(x22, x22, 64);
+                        ldr(ZReg(29), ptr(x22));
+                        add(x22, x22, 64);
                         break;
                     default: assert(!"unsupported data type");
                 }
                 if (jcp.bia_dt != data_type::f32)
-                    CGA64::scvtf(xa::ZRegS(vmm_bias.getIdx()), vmask,
-                            xa::ZRegS(vmm_bias.getIdx()));
+                    scvtf(ZRegS(vmm_bias.getIdx()), vmask,
+                            ZRegS(vmm_bias.getIdx()));
             }
             if (!jcp.signed_input) {
-                CGA64::ldr(reg_comp_data,
+                ldr(reg_comp_data,
                         SVE_compress_addr(reg_rsp, reg_comp_data_off));
                 // cvt2ps(data_type::s32, vmm_comp, comp_ptr(i_load), mask_flag);
                 comp_ptr(vmm_comp, i_load, mask_flag);
-                CGA64::scvtf(vmm_comp.s, vmask, vmm_comp.s);
+                scvtf(vmm_comp.s, vmask, vmm_comp.s);
             }
+#if 0
+            if (jcp.src_zero_point) {
+                // zero_point: conv(src_x8, wei_s8) - src_shift_s32 * compensation_s32
+                const int zp_offset = sizeof(int32_t) * i_load * jcp.load_block;
+                // vmovups(vmm_zp,
+                //         EVEX_compress_addr(reg_zp_compensation, zp_offset));
+                auto reg_addr = get_comp_addr_reg(reg_zp_compensation, zp_offset);
+                ldr(vmm_zp.s, ptr(reg_addr));
 
+                // vpmulld(vmm_zp, vmm_zp,
+                //         EVEX_compress_addr(
+                //                 reg_src_zero_point, 0, jcp.zp_src_is_common));
+                auto reg_addr2 = get_comp_addr_reg(reg_src_zero_point, 0);
+                ldr(vmm_zp2.s, ptr(reg_addr));
+                mul(vmm_zp.s, vmask, vmm_zp2.s);
+
+                // upscale to f32
+                auto vmm_ = mask_flag ? vmm_zp | ktail_mask | T_z : vmm_zp;
+                // vcvtdq2ps(vmm_, vmm_);
+                scvtf(ZRegS(vmm_.getIdx()), vmask, ZRegS(vmm_.getIdx()));
+            }
+#endif
             auto vmm_scale = vmm_one;
             scale_ptr(vmm_scale, i_load);
             for (int i_ur = 0; i_ur < ur; ++i_ur) {
                 auto r = vreg_accum(i_load, i_ur);
-                CGA64::scvtf(xa::ZRegS(r.getIdx()), xa::PReg(vmask.getIdx()),
-                        xa::ZRegS(r.getIdx())); //< vcvtdq2ps(r, r);
-                if (!jcp.signed_input) CGA64::fsub(r.s, r.s, vmm_comp.s);
-                if (jcp.with_bias) CGA64::fadd(r.s, r.s, vmm_bias.s);
+                scvtf(ZRegS(r.getIdx()), PReg(vmask.getIdx()),
+                        ZRegS(r.getIdx())); //< vcvtdq2ps(r, r);
+                if (!jcp.signed_input) fsub(r.s, r.s, vmm_comp.s);
+#if 0
+                if (jcp.src_zero_point) fadd(r.s, r.s, vmm_zp.s);
+#endif
+                if (jcp.with_bias) fadd(r.s, r.s, vmm_bias.s);
 
                 // const Vmm mask_vmm = mask_flag ? r | ktail_mask | T_z : r;
                 zmm_t mask_vmm = r;
                 // vmulps(mask_vmm, r, scale_ptr(i_load));
-                CGA64::fmul(xa::ZRegS(mask_vmm.getIdx()), xa::ZRegS(r.getIdx()),
-                        xa::ZRegS(vmm_scale.getIdx()));
+                fmul(ZRegS(mask_vmm.getIdx()), ZRegS(r.getIdx()),
+                        ZRegS(vmm_scale.getIdx()));
                 if (mask_flag) {
-                    CGA64::not_(mask_tmp.b, vmask.b, ktail_mask.b);
-                    CGA64::mov(xa::ZRegS(mask_vmm.getIdx()), mask_tmp / xa::T_m,
-                            0);
+                    not_(mask_tmp.b, vmask.b, ktail_mask.b);
+                    mov(ZRegS(mask_vmm.getIdx()), mask_tmp / T_m, 0);
                 }
             }
         }
@@ -435,7 +428,7 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                 const bool mask_flag
                         = mask_flag_in && i_load == load_loop_blk - 1;
                 for (int i_ur = 0; i_ur < ur; ++i_ur) {
-                    CGA64::eor(vmm_zero.d, vmm_zero.d, vmm_zero.d);
+                    eor(vmm_zero.d, vmm_zero.d, vmm_zero.d);
                     auto vmm_prev_dst = vmm_zero;
 
                     auto r = vreg_accum(i_load, i_ur);
@@ -447,61 +440,53 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                             output_ptr(vmm_prev_dst, i_load, i_ur, mask_flag);
                             break;
                         case data_type::s8:
-                            CGA64::sub(x22, x22, 64);
-                            CGA64::str(xa::ZReg(29), xa::ptr(x22));
-                            output_ptr8(xa::ZReg(29), i_load, i_ur, mask_flag);
-                            CGA64::zip1(xa::ZRegB(29), xa::ZRegB(29),
-                                    xa::ZRegB(29));
-                            CGA64::zip1(xa::ZRegH(29), xa::ZRegH(29),
-                                    xa::ZRegH(29));
-                            CGA64::sxtb(xa::ZRegS(vmm_prev_dst.getIdx()),
-                                    vmask / xa::T_m, xa::ZRegS(29));
+                            sub(x22, x22, 64);
+                            str(ZReg(29), ptr(x22));
+                            output_ptr8(ZReg(29), i_load, i_ur, mask_flag);
+                            zip1(ZRegB(29), ZRegB(29), ZRegB(29));
+                            zip1(ZRegH(29), ZRegH(29), ZRegH(29));
+                            sxtb(ZRegS(vmm_prev_dst.getIdx()), vmask / T_m,
+                                    ZRegS(29));
                             if (mask_flag) {
-                                CGA64::not_(mask_tmp.b, vmask.b, ktail_mask.b);
-                                CGA64::mov(
-                                        vmm_prev_dst.s, mask_tmp / xa::T_m, 0);
+                                not_(mask_tmp.b, vmask.b, ktail_mask.b);
+                                mov(vmm_prev_dst.s, mask_tmp / T_m, 0);
                             }
-                            CGA64::ldr(xa::ZReg(29), xa::ptr(x22));
-                            CGA64::add(x22, x22, 64);
+                            ldr(ZReg(29), ptr(x22));
+                            add(x22, x22, 64);
                             break;
                         case data_type::u8:
-                            CGA64::sub(x22, x22, 64);
-                            CGA64::str(xa::ZReg(29), xa::ptr(x22));
-                            output_ptr8(xa::ZReg(29), i_load, i_ur, mask_flag);
-                            CGA64::zip1(xa::ZRegB(29), xa::ZRegB(29),
-                                    xa::ZRegB(29));
-                            CGA64::zip1(xa::ZRegH(29), xa::ZRegH(29),
-                                    xa::ZRegH(29));
-                            CGA64::uxtb(xa::ZRegS(vmm_prev_dst.getIdx()),
-                                    vmask / xa::T_m, xa::ZRegS(29));
+                            sub(x22, x22, 64);
+                            str(ZReg(29), ptr(x22));
+                            output_ptr8(ZReg(29), i_load, i_ur, mask_flag);
+                            zip1(ZRegB(29), ZRegB(29), ZRegB(29));
+                            zip1(ZRegH(29), ZRegH(29), ZRegH(29));
+                            uxtb(ZRegS(vmm_prev_dst.getIdx()), vmask / T_m,
+                                    ZRegS(29));
                             if (mask_flag) {
-                                CGA64::not_(mask_tmp.b, vmask.b, ktail_mask.b);
-                                CGA64::mov(
-                                        vmm_prev_dst.s, mask_tmp / xa::T_m, 0);
+                                not_(mask_tmp.b, vmask.b, ktail_mask.b);
+                                mov(vmm_prev_dst.s, mask_tmp / T_m, 0);
                             }
-                            CGA64::ldr(xa::ZReg(29), xa::ptr(x22));
-                            CGA64::add(x22, x22, 64);
+                            ldr(ZReg(29), ptr(x22));
+                            add(x22, x22, 64);
                             break;
                         default: assert(!"unsupported data type");
                     }
                     if (jcp.dst_dt != data_type::f32)
-                        CGA64::scvtf(xa::ZRegS(vmm_prev_dst.getIdx()), vmask,
-                                xa::ZRegS(vmm_prev_dst.getIdx()));
+                        scvtf(ZRegS(vmm_prev_dst.getIdx()), vmask,
+                                ZRegS(vmm_prev_dst.getIdx()));
 
                     if (*p_sum_scale == 1.f) {
                         // vaddps(r, vmm_prev_dst);
-                        CGA64::fadd(r.s, r.s, vmm_prev_dst.s);
+                        fadd(r.s, r.s, vmm_prev_dst.s);
                     } else {
                         // vfmadd231ps(
                         //         r, vmm_prev_dst, zword_b[reg_ptr_sum_scale]);
-                        CGA64::sub(x22, x22, 64);
-                        CGA64::str(xa::ZReg(29), xa::ptr(x22));
-                        CGA64::ld1rw(xa::ZRegS(29), vmask / xa::T_z,
-                                xa::ptr(reg_ptr_sum_scale));
-                        CGA64::fmla(r.s, vmask / xa::T_m, vmm_prev_dst.s,
-                                xa::ZRegS(29));
-                        CGA64::ldr(xa::ZReg(29), xa::ptr(x22));
-                        CGA64::add(x22, x22, 64);
+                        sub(x22, x22, 64);
+                        str(ZReg(29), ptr(x22));
+                        ld1rw(ZRegS(29), vmask / T_z, ptr(reg_ptr_sum_scale));
+                        fmla(r.s, vmask / T_m, vmm_prev_dst.s, ZRegS(29));
+                        ldr(ZReg(29), ptr(x22));
+                        add(x22, x22, 64);
                     }
                 }
             }
@@ -510,17 +495,39 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         if (maybe_eltwise(1))
             eltwise_injector_->compute_vector_range(0, ur * load_loop_blk);
 
+#if 0
+        if (jcp.dst_zero_point) {
+//            mov(reg_dst_zero_point,
+//                    EVEX_compress_addr(rsp, reg_dst_zero_point_off));
+            ldr(reg_dst_zero_point,
+                    SVE_compress_addr(reg_rsp, reg_dst_zero_point_off));
+
+//            vcvtdq2ps(vmm_zp, EVEX_compress_addr(reg_dst_zero_point, 0, true));
+            auto reg_addr = get_comp_addr_reg(reg_dst_zero_point, 0);
+            ldr(vmm_zp2.s, ptr(reg_addr));
+            scvtf(ZRegS(vmm_zp.getIdx()), vmask, ZRegS(vmm_zp2.getIdx()));
+
+            /* Add dst zero_point to accumulator */
+            for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
+                for (int i_ur = 0; i_ur < ur; ++i_ur) {
+                    auto r = vreg_accum(i_load, i_ur);
+                    fadd(r.s, r.s, vmm_zp.s);
+                }
+            }
+        }
+#endif
+
         // Properly saturate the accumulators for integer datatypes
         if (one_of(jcp.dst_dt, u8, s8, s32)) {
             //            init_saturate_f32(vmm_zero, vmm_saturation,
             //                    reg_ptr_saturation_ubound, f32, jcp.dst_dt);
 
             if (jcp.dst_dt == data_type::u8) {
-                CGA64::eor(vmm_zero.d, vmm_zero.d, vmm_zero.d);
+                eor(vmm_zero.d, vmm_zero.d, vmm_zero.d);
             }
             float saturation_ubound = types::max_value<float>(jcp.dst_dt);
-            CGA64::mov_imm(reg_tmp0_imm, float2int(saturation_ubound));
-            CGA64::dup(vmm_saturation.s, xa::WReg(reg_tmp0_imm.getIdx()));
+            mov_imm(reg_tmp0_imm, float2int(saturation_ubound));
+            dup(vmm_saturation.s, WReg(reg_tmp0_imm.getIdx()));
 
             for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
                 for (int i_ur = 0; i_ur < ur; ++i_ur) {
@@ -529,20 +536,20 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
 
                     if (jcp.dst_dt == data_type::u8) {
                         // vmaxps(vmm, vmm, vmm_lbound);
-                        CGA64::fmaxnm(r.s, vmask, vmm_zero.s);
-                        CGA64::fmax(r.s, vmask, vmm_zero.s);
+                        fmaxnm(r.s, vmask, vmm_zero.s);
+                        fmax(r.s, vmask, vmm_zero.s);
                     }
                     // vminps(vmm, vmm, vmm_ubound);
-                    CGA64::fminnm(r.s, vmask, vmm_saturation.s);
-                    CGA64::fmin(r.s, vmask, vmm_saturation.s);
+                    fminnm(r.s, vmask, vmm_saturation.s);
+                    fmin(r.s, vmask, vmm_saturation.s);
 
                     // vcvtps2dq(r, r);
 #if 1
-                    CGA64::frintn(r.s, vmask, r.s); // T_rn_sae
-                    CGA64::fcvtzs(r.s, vmask, r.s);
+                    frintn(r.s, vmask, r.s); // T_rn_sae
+                    fcvtzs(r.s, vmask, r.s);
 #else
-                    CGA64::frintm(r.s, vmask, r.s); // T_rd_sae
-                    CGA64::fcvtzs(r.s, vmask, r.s);
+                    frintm(r.s, vmask, r.s); // T_rd_sae
+                    fcvtzs(r.s, vmask, r.s);
 #endif
                 }
             }
@@ -566,6 +573,7 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
 
                 int scale = 0;
 
+                const int EVEX_max_8b_offt = 0x200;
                 if (EVEX_max_8b_offt <= offt && offt < 3 * EVEX_max_8b_offt) {
                     offt = offt - 2 * EVEX_max_8b_offt;
                     scale = 1;
@@ -588,43 +596,39 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                         : ((i_ur % 4) == 1) ? reg_tmp1_imm
                                             : ((i_ur % 4) == 2) ? reg_tmp2_imm
                                                                 : reg_tmp3_imm;
-                CGA64::add_imm(
-                        reg_tmp_adr, xa::XReg(base.getIdx()), re, reg_tmp_imm);
+                add_imm(reg_tmp_adr, XReg(base.getIdx()), re, reg_tmp_imm);
 
                 auto _mask = mask_flag ? ktail_mask : vmask;
                 switch (jcp.dst_dt) {
                     case data_type::f32:
                     case data_type::s32:
                         // vmovups(output_ptr(i_load, i_ur), r_vmm);
-                        CGA64::st1w(r_vmm.s, _mask, xa::ptr(reg_tmp_adr));
+                        st1w(r_vmm.s, _mask, ptr(reg_tmp_adr));
                         break;
                     case data_type::s8:
                         // vpmovsdb(output_ptr(i_load, i_ur), r_vmm);
-                        CGA64::smin(r_vmm.s, 127);
-                        CGA64::smax(r_vmm.s, -128);
-                        CGA64::st1b(r_vmm.s, _mask, xa::ptr(reg_tmp_adr));
+                        smin(r_vmm.s, 127);
+                        smax(r_vmm.s, -128);
+                        st1b(r_vmm.s, _mask, ptr(reg_tmp_adr));
                         break;
                     case data_type::u8:
                         // vpmovusdb(output_ptr(i_load, i_ur), r_vmm);
-                        CGA64::umin(r_vmm.s, 255);
-                        CGA64::st1b(r_vmm.s, _mask, xa::ptr(reg_tmp_adr));
+                        umin(r_vmm.s, 255);
+                        st1b(r_vmm.s, _mask, ptr(reg_tmp_adr));
                         break;
                     default: assert(!"unknown dst_dt");
                 }
             }
         }
-        CGA64::ldr(
-                reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
+        ldr(reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
         if (p_sum_scale && *p_sum_scale != 1.f)
-            CGA64::ldr(reg_load_data,
-                    SVE_compress_addr(reg_rsp, reg_load_data_off));
+            ldr(reg_load_data, SVE_compress_addr(reg_rsp, reg_load_data_off));
     };
 
-    auto compute = [=](xa::ZReg vreg_acc, xa::ZReg vreg_wei,
-                           xa::ZReg vreg_src) {
+    auto compute = [=](ZReg vreg_acc, ZReg vreg_wei, ZReg vreg_src) {
         // vpdpbusd(vreg_acc, vreg_src, vreg_wei);
-        CGA64::sdot(xa::ZRegS(vreg_acc.getIdx()), xa::ZRegB(vreg_src.getIdx()),
-                xa::ZRegB(vreg_wei.getIdx()));
+        sdot(ZRegS(vreg_acc.getIdx()), ZRegB(vreg_src.getIdx()),
+                ZRegB(vreg_wei.getIdx()));
     };
 
     auto fma_block = [=](bool last_block) {
@@ -641,39 +645,39 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                 if (jcp.signed_input) {
                     if (last_block && ic_tail_size != 0
                             && i_reduce == loop_unroll - reduce_step) {
-                        auto xmm_bcast = xa::VReg16B(vmm_bcast.getIdx());
+                        auto xmm_bcast = VReg16B(vmm_bcast.getIdx());
                         // load_bytes(xmm_bcast, aux_reg_bcast_data,
                         //         jcp.ic_without_padding * i_ur + i_reduce,
                         //         ic_tail_size);
                         for (int r = 0; r < ic_tail_size; ++r) {
-                            CGA64::add_imm(reg_tmp0_adr, aux_reg_bcast_data,
+                            add_imm(reg_tmp0_adr, aux_reg_bcast_data,
                                     (jcp.ic_without_padding * i_ur + i_reduce
                                             + r),
                                     reg_tmp0_imm);
-                            CGA64::ldrb(xa::WReg(reg_tmp1_imm.getIdx()),
-                                    xa::ptr(reg_tmp0_adr));
-                            CGA64::ins_(xa::VReg16B(xmm_bcast.getIdx())[r],
-                                    xa::WReg(reg_tmp1_imm.getIdx()));
+                            ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                    ptr(reg_tmp0_adr));
+                            ins_(VReg16B(xmm_bcast.getIdx())[r],
+                                    WReg(reg_tmp1_imm.getIdx()));
                         }
                         // vpbroadcastd(vmm_bcast, xmm_bcast);
                         auto _bcast
                                 = ((i_ur % 2) == 0) ? vmm_bcast : vmm_bcast2;
-                        CGA64::dup(xa::ZRegS(_bcast.getIdx()),
-                                xa::ZRegS(xmm_bcast.getIdx())[0]);
+                        dup(ZRegS(_bcast.getIdx()),
+                                ZRegS(xmm_bcast.getIdx())[0]);
                     } else {
                         if (i_ur == 0) {
                             // vpbroadcastd(vmm_bcast, bcast_ptr(i_reduce, i_ur, false));
                             bcast_ptr(vmm_bcast, i_reduce, i_ur, false);
                         }
                         if ((i_ur + 1) < ur) {
-                            xa::ZReg _bcast = ((i_ur % 2) == 0) ? vmm_bcast2
-                                                                : vmm_bcast;
+                            ZReg _bcast = ((i_ur % 2) == 0) ? vmm_bcast2
+                                                            : vmm_bcast;
                             // vpbroadcastd(vmm_bcast, bcast_ptr(i_reduce, (i_ur+1), false));
                             bcast_ptr(_bcast, i_reduce, (i_ur + 1), false);
                         }
                     }
                     for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
-                        xa::ZReg _bcast
+                        ZReg _bcast
                                 = ((i_ur % 2) == 0) ? vmm_bcast : vmm_bcast2;
                         compute(vreg_accum(i_load, i_ur), vreg_load(i_load),
                                 _bcast);
@@ -681,23 +685,23 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                 } else {
                     if (last_block && ic_tail_size != 0
                             && i_reduce == loop_unroll - reduce_step) {
-                        auto xmm_bcast = xa::VReg16B(vmm_bcast.getIdx());
+                        auto xmm_bcast = VReg16B(vmm_bcast.getIdx());
                         for (int r = 0; r < ic_tail_size; ++r) {
-                            CGA64::add_imm(reg_tmp0_adr, aux_reg_bcast_data,
+                            add_imm(reg_tmp0_adr, aux_reg_bcast_data,
                                     (jcp.ic_without_padding * i_ur + i_reduce
                                             + r),
                                     reg_tmp0_imm);
-                            CGA64::ldrb(xa::WReg(reg_tmp1_imm.getIdx()),
-                                    xa::ptr(reg_tmp0_adr));
-                            CGA64::ins_(xa::VReg16B(xmm_bcast.getIdx())[r],
-                                    xa::WReg(reg_tmp1_imm.getIdx()));
+                            ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                    ptr(reg_tmp0_adr));
+                            ins_(VReg16B(xmm_bcast.getIdx())[r],
+                                    WReg(reg_tmp1_imm.getIdx()));
                         }
-                        CGA64::dup(xa::ZRegS(vmm_bcast.getIdx()),
-                                xa::ZRegS(xmm_bcast.getIdx())[0]);
+                        dup(ZRegS(vmm_bcast.getIdx()),
+                                ZRegS(xmm_bcast.getIdx())[0]);
                     } else {
                         bcast_ptr(vmm_bcast, i_reduce, i_ur, false);
                     }
-                    CGA64::add(vmm_bcast.b, vmm_bcast.b, vmm_shift.b);
+                    add(vmm_bcast.b, vmm_bcast.b, vmm_shift.b);
                     for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
                         compute(vreg_accum(i_load, i_ur), vreg_load(i_load),
                                 vmm_bcast);
@@ -707,30 +711,29 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
         }
     };
 
-    xa::LabelAArch64 reduce_loop;
-    xa::LabelAArch64 reduce_loop_tail;
+    Label reduce_loop;
+    Label reduce_loop_tail;
 
-    CGA64::mov(aux_reg_load_data, reg_load_data);
+    mov(aux_reg_load_data, reg_load_data);
 
-    CGA64::mov(aux_reg_bcast_data, aux1_reg_bcast_data);
+    mov(aux_reg_bcast_data, aux1_reg_bcast_data);
     init();
 
-    CGA64::mov(reduce_loop_iter, reg_reduce_loop_work);
-    CGA64::subs(reduce_loop_iter, reduce_loop_iter, jcp.reduce_loop_unroll);
-    CGA64::b(xa::LE, reduce_loop_tail);
+    mov(reduce_loop_iter, reg_reduce_loop_work);
+    subs(reduce_loop_iter, reduce_loop_iter, jcp.reduce_loop_unroll);
+    b(LE, reduce_loop_tail);
 
-    CGA64::L_aarch64(reduce_loop);
+    L(reduce_loop);
     {
         fma_block(false);
-        CGA64::adds(aux_reg_bcast_data, aux_reg_bcast_data,
+        adds(aux_reg_bcast_data, aux_reg_bcast_data,
                 jcp.reduce_loop_bcast_step);
-        CGA64::adds(aux_reg_load_data, aux_reg_load_data,
-                jcp.reduce_loop_load_step);
-        CGA64::subs(reduce_loop_iter, reduce_loop_iter, jcp.reduce_loop_unroll);
-        CGA64::b(xa::GT, reduce_loop);
+        adds(aux_reg_load_data, aux_reg_load_data, jcp.reduce_loop_load_step);
+        subs(reduce_loop_iter, reduce_loop_iter, jcp.reduce_loop_unroll);
+        b(GT, reduce_loop);
     }
 
-    CGA64::L_aarch64(reduce_loop_tail);
+    L(reduce_loop_tail);
     if (jcp.ic != jcp.ic_without_padding) {
         fma_block(true);
     } else {
@@ -738,29 +741,28 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
     }
 
     if (jcp.oc_without_padding != jcp.oc) {
-        xa::LabelAArch64 end_store, common_store;
-        CGA64::str(
-                reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
+        Label end_store, common_store;
+        str(reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
 
         /*Check if it is the last load_loop_blk*/
-        CGA64::subs(reg_load_loop_work, reg_load_loop_work,
+        subs(reg_load_loop_work, reg_load_loop_work,
                 load_loop_blk * jcp.load_loop_iter_step);
-        CGA64::cmp(reg_load_loop_work, 0);
-        CGA64::b(xa::GT, common_store);
+        cmp(reg_load_loop_work, 0);
+        b(GT, common_store);
 
         /*Check if it is the last ocb*/
-        CGA64::tst(reg_reduce_pos_flag, FLAG_OC_LAST);
-        CGA64::b(xa::EQ, common_store);
+        tst(reg_reduce_pos_flag, FLAG_OC_LAST);
+        b(EQ, common_store);
 
         store(true);
-        CGA64::b(end_store);
+        b(end_store);
 
-        CGA64::L_aarch64(common_store);
+        L(common_store);
         store(false);
 
-        CGA64::L_aarch64(end_store);
+        L(end_store);
 
-        CGA64::add_imm(reg_load_loop_work, reg_load_loop_work,
+        add_imm(reg_load_loop_work, reg_load_loop_work,
                 load_loop_blk * jcp.load_loop_iter_step, reg_tmp0_imm);
     } else {
         store(false);
@@ -773,103 +775,110 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
     preamble();
     const int simd_w = jcp.ic_block;
 
-    CGA64::ptrue(xa::PRegB(vmask.getIdx()));
-    CGA64::pfalse(xa::PRegB(mask_all_zero.getIdx()));
+    ptrue(PRegB(vmask.getIdx()));
+    pfalse(PRegB(mask_all_zero.getIdx()));
 
     // xor_(reg_scratch, reg_scratch);
     // Reg16 _t = reg_scratch.cvt16();
     // mov(_t, 0x1);
     // vpbroadcastw(vmm_one, _t);
-    CGA64::dup(vmm_one.h, 0x1);
+    dup(vmm_one.h, 0x1);
 
-    CGA64::subs(reg_rsp, reg_rsp, stack_space_needed);
+    subs(reg_rsp, reg_rsp, stack_space_needed);
 
     if (jcp.oc_without_padding != jcp.oc) {
         int tail_size = jcp.oc_without_padding % jcp.oc_block;
         int mask = (1 << tail_size) - 1;
         // Reg32 regw_tmp = reg_last_load.cvt32();
         auto regw_tmp = reg_last_load;
-        CGA64::mov(regw_tmp, mask);
+        mov(regw_tmp, mask);
         // kmovw(ktail_mask, regw_tmp);
-        CGA64::index(xa::ZRegS(0), 0, 1);
-        CGA64::mov(xa::ZRegS(1), 1);
-        CGA64::lsl(xa::ZRegS(1), vmask / xa::T_m, xa::ZRegS(0));
-        CGA64::dup(xa::ZRegS(0), xa::WReg(regw_tmp.getIdx()));
-        CGA64::and_(xa::ZRegD(0), xa::ZRegD(0), xa::ZRegD(1));
-        CGA64::cmpne(ktail_mask.s, vmask, xa::ZRegS(0), 0);
+        index(ZRegS(0), 0, 1);
+        mov(ZRegS(1), 1);
+        lsl(ZRegS(1), vmask / T_m, ZRegS(0));
+        dup(ZRegS(0), WReg(regw_tmp.getIdx()));
+        and_(ZRegD(0), ZRegD(0), ZRegD(1));
+        cmpne(ktail_mask.s, vmask, ZRegS(0), 0);
     }
 
     if (jcp.with_bias)
-        CGA64::ldr(reg_bias_data, xa::ptr(reg_abi_param1, GET_OFF(bias_data)));
+        ldr(reg_bias_data, ptr(reg_abi_param1, GET_OFF(bias_data)));
     if (!jcp.signed_input) {
-        CGA64::str(
-                reg_bias_data, SVE_compress_addr(reg_rsp, reg_bias_data_off));
-        CGA64::ldr(
-                reg_comp_data, xa::ptr(reg_abi_param1, GET_OFF(compensation)));
-        CGA64::str(
-                reg_comp_data, SVE_compress_addr(reg_rsp, reg_comp_data_off));
+        str(reg_bias_data, SVE_compress_addr(reg_rsp, reg_bias_data_off));
+        ldr(reg_comp_data, ptr(reg_abi_param1, GET_OFF(compensation)));
+        str(reg_comp_data, SVE_compress_addr(reg_rsp, reg_comp_data_off));
     }
+#if 0
+    if (jcp.src_zero_point) {
+        ldr(reg_zp_compensation, ptr(reg_abi_param1, GET_OFF(zp_compensation)));
+        str(reg_zp_compensation, SVE_compress_addr(reg_rsp, reg_zp_compensation_off));
+        ldr(reg_src_zero_point, ptr(reg_abi_param1, GET_OFF(src_zero_point)));
+        str(reg_src_zero_point, SVE_compress_addr(reg_rsp, reg_src_zero_point_off));
+    }
+    if (jcp.dst_zero_point) {
+        ldr(reg_dst_zero_point, ptr(reg_abi_param1, GET_OFF(dst_zero_point)));
+        str(reg_dst_zero_point, SVE_compress_addr(reg_rsp, reg_dst_zero_point_off));
+    }
+#endif
 
-    CGA64::ldr(reg_ptr_scales, xa::ptr(reg_abi_param1, GET_OFF(scales)));
-    CGA64::str(
-            reg_ptr_scales, SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
-    CGA64::ldr(reg_bcast_data, xa::ptr(reg_abi_param1, GET_OFF(bcast_data)));
-    CGA64::ldr(reg_load_data, xa::ptr(reg_abi_param1, GET_OFF(load_data)));
-    CGA64::ldr(reg_output_data, xa::ptr(reg_abi_param1, GET_OFF(output_data)));
+    ldr(reg_ptr_scales, ptr(reg_abi_param1, GET_OFF(scales)));
+    str(reg_ptr_scales, SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
+    ldr(reg_bcast_data, ptr(reg_abi_param1, GET_OFF(bcast_data)));
+    ldr(reg_load_data, ptr(reg_abi_param1, GET_OFF(load_data)));
+    ldr(reg_output_data, ptr(reg_abi_param1, GET_OFF(output_data)));
 
-    CGA64::ldr(reg_load_loop_work, xa::ptr(reg_abi_param1, GET_OFF(load_dim)));
-    CGA64::ldr(
-            reg_bcast_loop_work, xa::ptr(reg_abi_param1, GET_OFF(bcast_dim)));
-    CGA64::str(reg_bcast_loop_work,
-            SVE_compress_addr(reg_rsp, bcast_loop_work_off));
-    CGA64::ldr(
-            reg_reduce_loop_work, xa::ptr(reg_abi_param1, GET_OFF(reduce_dim)));
-    CGA64::ldr(reg_reduce_pos_flag,
-            xa::ptr(reg_abi_param1, GET_OFF(first_last_flag)));
+    ldr(reg_load_loop_work, ptr(reg_abi_param1, GET_OFF(load_dim)));
+    ldr(reg_bcast_loop_work, ptr(reg_abi_param1, GET_OFF(bcast_dim)));
+    str(reg_bcast_loop_work, SVE_compress_addr(reg_rsp, bcast_loop_work_off));
+    ldr(reg_reduce_loop_work, ptr(reg_abi_param1, GET_OFF(reduce_dim)));
+    ldr(reg_reduce_pos_flag, ptr(reg_abi_param1, GET_OFF(first_last_flag)));
 
     auto load_loop_body = [=](int load_loop_blk) {
         bcast_loop(load_loop_blk);
-        CGA64::add_imm(reg_load_data, reg_load_data,
+        add_imm(reg_load_data, reg_load_data,
                 load_loop_blk * jcp.load_loop_load_step, reg_tmp0_imm);
         if (jcp.with_bias) {
             if (!jcp.signed_input)
-                CGA64::ldr(reg_bias_data,
+                ldr(reg_bias_data,
                         SVE_compress_addr(reg_rsp, reg_bias_data_off));
-            CGA64::add_imm(reg_bias_data, reg_bias_data,
+            add_imm(reg_bias_data, reg_bias_data,
                     load_loop_blk * jcp.load_block * jcp.typesize_bia,
                     reg_tmp0_imm);
             if (!jcp.signed_input)
-                CGA64::str(reg_bias_data,
+                str(reg_bias_data,
                         SVE_compress_addr(reg_rsp, reg_bias_data_off));
         }
         if (!jcp.signed_input) {
-            CGA64::ldr(reg_comp_data,
-                    SVE_compress_addr(reg_rsp, reg_comp_data_off));
-            CGA64::add_imm(reg_comp_data, reg_comp_data,
+            ldr(reg_comp_data, SVE_compress_addr(reg_rsp, reg_comp_data_off));
+            add_imm(reg_comp_data, reg_comp_data,
                     load_loop_blk * jcp.load_block * sizeof(int32_t),
                     reg_tmp0_imm);
-            CGA64::str(reg_comp_data,
-                    SVE_compress_addr(reg_rsp, reg_comp_data_off));
+            str(reg_comp_data, SVE_compress_addr(reg_rsp, reg_comp_data_off));
         }
-        CGA64::str(
-                reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
-        CGA64::ldr(reg_ptr_scales,
-                SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
-        CGA64::add_imm(reg_ptr_scales, reg_ptr_scales,
+#if 0
+        if (jcp.src_zero_point) {
+            ldr(reg_zp_compensation,
+                    SVE_compress_addr(reg_rsp, reg_zp_compensation_off));
+            add_imm(reg_zp_compensation, reg_zp_compensation,
+                    load_loop_blk * jcp.load_block * sizeof(int32_t), reg_tmp0_imm);
+            str(reg_zp_compensation, SVE_compress_addr(reg_rsp, reg_zp_compensation_off));
+        }
+#endif
+        str(reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
+        ldr(reg_ptr_scales, SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
+        add_imm(reg_ptr_scales, reg_ptr_scales,
                 jcp.is_oc_scale * load_loop_blk * jcp.load_block
                         * sizeof(float),
                 reg_tmp0_imm);
-        CGA64::str(reg_ptr_scales,
-                SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
-        CGA64::ldr(
-                reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
-        CGA64::adds(reg_output_data, reg_output_data,
+        str(reg_ptr_scales, SVE_compress_addr(reg_rsp, reg_ptr_sum_scale_off));
+        ldr(reg_bcast_data, SVE_compress_addr(reg_rsp, reg_bcast_data_off));
+        adds(reg_output_data, reg_output_data,
                 load_loop_blk * jcp.load_block * jcp.typesize_out);
-        CGA64::subs(reg_load_loop_work, reg_load_loop_work,
+        subs(reg_load_loop_work, reg_load_loop_work,
                 load_loop_blk * jcp.load_loop_iter_step);
     };
 
-    xa::LabelAArch64 load_loop_blk[7];
+    Label load_loop_blk[7];
 
     static const int ur_cases_fma_expl_bcast[] = {2, 5, 6, 9, 14, 32};
     const int size_ur_cases_fma = sizeof(ur_cases_fma_expl_bcast);
@@ -880,53 +889,53 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
     for (int ur_idx = num_ur_cases - 1; ur_idx > 0; ur_idx--) {
         int label_idx = num_ur_cases - ur_idx - 1;
         if (jcp.ur <= ur_cases[ur_idx]) {
-            CGA64::cmp(reg_load_loop_work, simd_w * (label_idx + 1));
-            CGA64::b(xa::LE, load_loop_blk[label_idx]);
+            cmp(reg_load_loop_work, simd_w * (label_idx + 1));
+            b(LE, load_loop_blk[label_idx]);
         }
     }
 
     for (int ur_idx = 0; ur_idx < num_ur_cases; ur_idx++) {
         if (jcp.ur <= ur_cases[ur_idx]) {
             int label_idx = num_ur_cases - ur_idx - 1;
-            CGA64::L_aarch64(load_loop_blk[label_idx]);
+            L(load_loop_blk[label_idx]);
             {
                 if (label_idx == 0) {
-                    CGA64::cmp(reg_load_loop_work, 0);
-                    CGA64::b(xa::EQ, load_loop_blk[num_ur_cases]);
+                    cmp(reg_load_loop_work, 0);
+                    b(EQ, load_loop_blk[num_ur_cases]);
                 }
 
                 for (int _i = 1; _i <= label_idx + 1; _i++) {
                     // prefetcht0(ptr[reg_load_data + _i * jcp.ic * jcp.oc_block]);
                     // prefetcht1(ptr[reg_output_data + _i * jcp.oc_block]);
-                    CGA64::add_imm(reg_tmp0_adr, reg_load_data,
+                    add_imm(reg_tmp0_adr, reg_load_data,
                             (_i * jcp.ic * jcp.oc_block), reg_tmp0_imm);
-                    CGA64::add_imm(reg_tmp1_adr, reg_output_data,
-                            (_i * jcp.oc_block), reg_tmp1_imm);
-                    CGA64::prfm(xa::PLDL1KEEP, xa::ptr(reg_tmp0_adr));
-                    CGA64::prfm(xa::PLDL2KEEP, xa::ptr(reg_tmp1_adr));
+                    add_imm(reg_tmp1_adr, reg_output_data, (_i * jcp.oc_block),
+                            reg_tmp1_imm);
+                    prfm(PLDL1KEEP, ptr(reg_tmp0_adr));
+                    prfm(PLDL2KEEP, ptr(reg_tmp1_adr));
                 }
 
                 load_loop_body(label_idx + 1);
                 if (label_idx - 1 > 0) {
-                    CGA64::cmp(reg_load_loop_work, 2 * label_idx * simd_w);
-                    CGA64::b(xa::EQ, load_loop_blk[label_idx - 1]);
+                    cmp(reg_load_loop_work, 2 * label_idx * simd_w);
+                    b(EQ, load_loop_blk[label_idx - 1]);
                 }
-                CGA64::cmp(reg_load_loop_work, (label_idx + 1) * simd_w);
-                CGA64::b(xa::GE, load_loop_blk[label_idx]);
+                cmp(reg_load_loop_work, (label_idx + 1) * simd_w);
+                b(GE, load_loop_blk[label_idx]);
             }
             for (int idx = label_idx - 1; idx > 0; --idx) {
-                CGA64::cmp(reg_load_loop_work, simd_w * (idx + 1));
-                CGA64::b(xa::EQ, load_loop_blk[idx]);
+                cmp(reg_load_loop_work, simd_w * (idx + 1));
+                b(EQ, load_loop_blk[idx]);
             }
             if (ur_idx < num_ur_cases - 2) {
-                CGA64::cmp(reg_load_loop_work, simd_w);
-                CGA64::b(xa::LE, load_loop_blk[0]);
+                cmp(reg_load_loop_work, simd_w);
+                b(LE, load_loop_blk[0]);
             }
         }
     }
-    CGA64::L_aarch64(load_loop_blk[num_ur_cases]);
+    L(load_loop_blk[num_ur_cases]);
 
-    CGA64::add_imm(reg_rsp, reg_rsp, stack_space_needed, reg_tmp0_imm);
+    add_imm(reg_rsp, reg_rsp, stack_space_needed, reg_tmp0_imm);
 
     postamble();
 
@@ -969,7 +978,7 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
         memory_desc_t &dst_md, memory_desc_t &bias_md,
         const primitive_attr_t &attr, int nthreads, bool reduce_src) {
 
-    if (!mayiuse(sve)) return status::unimplemented;
+    if (!mayiuse(sve_512)) return status::unimplemented;
 
     const memory_desc_wrapper src_d(src_md);
     const memory_desc_wrapper weights_d(&weights_md);
@@ -1046,6 +1055,18 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
             return status::unimplemented;
     }
 
+#if 0
+    const auto zp = attr.zero_points_;
+    jcp.dst_zero_point = !zp.has_default_values(DNNL_ARG_DST);
+    jcp.src_zero_point = !zp.has_default_values(DNNL_ARG_SRC);
+    jcp.zp_src_is_common
+            = zp.common(DNNL_ARG_SRC); // otherwise, it's per-channel
+    assert(IMPLICATION(jcp.src_zero_point, jcp.zp_src_is_common));
+
+    if ((jcp.dst_zero_point || jcp.src_zero_point) && jcp.with_dw_conv)
+        return status::unimplemented;
+#endif
+
     format_tag_t dat_tag = utils::pick(
             ndims - 3, format_tag::nwc, format_tag::nhwc, format_tag::ndhwc);
     jcp.src_tag = src_d.matches_one_of_tag(dat_tag);
@@ -1065,6 +1086,7 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
 
     auto set_or_check_wei_format = [&]() -> bool {
         using namespace format_tag;
+        using namespace memory_extra_flags;
         const format_tag_t wei_tags[3][2][3]
                 = {{{OIw4i16o4i, OIhw4i16o4i, OIdhw4i16o4i},
                            {gOIw4i16o4i, gOIhw4i16o4i, gOIdhw4i16o4i}},
@@ -1078,15 +1100,20 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
         memory_desc_t want_wei_md = weights_md;
         memory_desc_init_by_tag(want_wei_md, wei_tag);
         if (!jcp.signed_input) {
-            want_wei_md.extra.flags = 0
-                    | memory_extra_flags::compensation_conv_s8s8
-                    | memory_extra_flags::scale_adjust;
+            want_wei_md.extra.flags = 0 | compensation_conv_s8s8 | scale_adjust;
             want_wei_md.extra.compensation_mask
                     = (1 << 0) + (with_groups ? (1 << 1) : 0);
             want_wei_md.extra.scale_adjust
                     // = mayiuse(avx512_core_vnni) ? 1.f : 0.5f;
                     = 1.f;
         }
+#if 0
+        if (jcp.src_zero_point) {
+            want_wei_md.extra.flags |= compensation_conv_asymmetric_src;
+            want_wei_md.extra.asymm_compensation_mask
+                    = (1 << 0) + (with_groups ? (1 << 1) : 0);
+        }
+#endif
 
         if (weights_md.format_kind == format_kind::any) {
             weights_md = want_wei_md;
@@ -1286,8 +1313,9 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
     jcp.nb_load_chunk = 1;
     // peformance improvements for googlenet_v3, mb=1;
     // TODO: generalize this condition and rewrite it in appropriate manner
-    int ncores_per_socket = (int)cpu.getNumCores(
-            Xbyak::util::IntelCpuTopologyLevel::CoreLevel);
+    //    int ncores_per_socket = (int)cpu().getNumCores(
+    //            Xbyak::util::IntelCpuTopologyLevel::CoreLevel);
+    int ncores_per_socket = (int)2;
     if (jcp.mb == 1 && jcp.nb_load % 4 == 0 && jcp.ic / jcp.oc >= 4
             && jcp.ic * jcp.oc <= L2_size && jcp.nthr <= ncores_per_socket) {
         jcp.nb_load_chunk = 4;
@@ -1310,9 +1338,11 @@ void jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_scratchpad(
     using namespace dnnl::impl::memory_tracking::names;
 }
 
-template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Zmm>;
-template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Ymm>;
-template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xbyak::Xmm>;
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<ZReg>;
+#if 0
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Ymm>;
+template struct _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Xmm>;
+#endif
 
 } // namespace aarch64
 } // namespace cpu

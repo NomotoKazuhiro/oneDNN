@@ -26,6 +26,7 @@
 #include "common/utils.hpp"
 
 #include "cpu/aarch64/jit_generator.hpp"
+#include "cpu/aarch64/jit_primitive_conf.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -72,8 +73,9 @@ inline void rtus_prepare(conv_pd_t *self, const convolution_desc_t *&conv_d,
 
     const bool is_nspc
             = utils::one_of(dat_tag, format_tag::nwc, format_tag::nhwc);
-    if (is_nspc && !mayiuse(avx2)) return;
+    if (is_nspc && !mayiuse(sve_256)) return;
 
+#if 1
     // rtus is applicable, configure it.
     self->rtus_.reduce_src_ = true;
     conv_d = &(self->rtus_.conv_d_ = *conv_d);
@@ -97,6 +99,7 @@ inline void rtus_prepare(conv_pd_t *self, const convolution_desc_t *&conv_d,
         memory_desc_wrapper::compute_blocking(
                 self->rtus_.conv_d_.src_desc, dat_tag);
     }
+#endif
 }
 
 template <typename conv_pd_t>
@@ -129,28 +132,31 @@ struct rtus_driver_t : public jit_generator {
         size_t iw_start;
     };
 
-    void (*ker_)(const call_params_t *p);
-
     DECLARE_CPU_JIT_AUX_FUNCTIONS(rtus_driver_t)
 
-    Xbyak::Reg64 reg_ws = r12;
-    Xbyak::Reg64 reg_src = r13;
-    Xbyak::Reg64 reg_icb = rdx;
-    Xbyak::Reg64 reg_os = r11;
-    Xbyak::Reg64 reg_iw_start = r8;
+    Xbyak_aarch64::XReg reg_ws = x5;
+    Xbyak_aarch64::XReg reg_src = x6;
+    Xbyak_aarch64::XReg reg_icb = x7;
+    Xbyak_aarch64::XReg reg_os = x8;
+    Xbyak_aarch64::XReg reg_iw_start = x9;
 
-    Xbyak::Reg64 reg_cur_os = rax;
-    Xbyak::Reg64 reg_cur_iw = r9;
-    Xbyak::Reg64 reg_cur_src = r10;
-    Xbyak::Reg64 reg_cur_src_fin = reg_cur_iw; /* just reuse */
+    Xbyak_aarch64::XReg reg_cur_os = x10;
+    Xbyak_aarch64::XReg reg_cur_iw = x11;
+    Xbyak_aarch64::XReg reg_cur_src = x12;
+    Xbyak_aarch64::XReg reg_cur_src_fin = reg_cur_iw; /* just reuse */
 
-    Xbyak::Opmask tail_mask = k2;
+    Xbyak_aarch64::PReg tail_mask = p1;
 
     // nspc section
-    Xbyak::Reg64 reg_cur_icb = rax;
-    Xbyak::Reg64 reg_tail_mask = r14;
-    Xbyak::Reg64 reg_icb_remainder = rcx;
-    Xbyak::Reg64 reg_ws_copy = r15;
+    Xbyak_aarch64::XReg reg_cur_icb = x13;
+    Xbyak_aarch64::XReg reg_tail_mask = x14;
+    Xbyak_aarch64::XReg reg_icb_remainder = x15;
+    Xbyak_aarch64::XReg reg_ws_copy = x16;
+    Xbyak_aarch64::XReg reg_tmp_imm = x17;
+    Xbyak_aarch64::XReg reg_tmp = x18;
+
+    Xbyak_aarch64::ZReg reg_zero = Xbyak_aarch64::ZReg(0);
+    Xbyak_aarch64::ZReg reg_v = Xbyak_aarch64::ZReg(1);
 
     int iw_, stride_w_;
     int src_step_h_, src_step_icb_, ws_step_icb_, vlen_, vlen_shift_;
@@ -158,9 +164,6 @@ struct rtus_driver_t : public jit_generator {
     size_t typesize_;
     int ic_, ic_tail_;
     bool is_nspc_;
-
-    Xbyak::Xmm reg_zero;
-    Xbyak::Xmm reg_v;
 
     rtus_driver_t(int iw, int stride_w, int src_step_h, int src_step_icb,
             int ws_step_icb, bool src_to_ws, size_t typesize, int ic,
@@ -174,7 +177,7 @@ struct rtus_driver_t : public jit_generator {
         , typesize_(typesize)
         , ic_(ic)
         , is_nspc_(is_nspc) {
-        using namespace Xbyak;
+        using namespace Xbyak_aarch64;
 
         assert(ic_ > 0);
 
@@ -185,39 +188,23 @@ struct rtus_driver_t : public jit_generator {
          * data_type change, e.g. uni_vpxor doen't
          * work on reg_zero now*/
         auto Vmm = [=](int idx, size_t typesize) {
-            Xmm res;
+            ZReg res = ZReg(idx);
             if (is_nspc_) {
                 switch (isa) {
-                    case avx2: res = Ymm(idx); break;
-                    case avx512_common:
-                    case avx512_core:
-                    case sve:
-                    case avx512_mic: res = Zmm(idx); break;
-                    default: assert(!"Not supported isa"); res = Xmm(idx);
+                    case sve_512: res = ZReg(idx); break;
+                    default: assert(!"Not supported isa"); res = ZReg(idx);
                 }
                 return res;
             }
             switch (isa) {
-                case avx2:
+                case sve_512:
                     switch (typesize) {
-                        case 4: res = Ymm(idx); break;
-                        case 2: res = Xmm(idx); break;
+                        case 4: res = ZReg(idx); break;
+                        //case 2: res = Ymm(idx); break;
+                        //case 1: res = Xmm(idx); break;
                         default:
                             assert(!"Not supported typesize");
-                            res = Ymm(idx);
-                    }
-                    break;
-                case avx512_common:
-                case avx512_core:
-                case avx512_mic:
-                case sve:
-                    switch (typesize) {
-                        case 4: res = Zmm(idx); break;
-                        case 2: res = Ymm(idx); break;
-                        case 1: res = Xmm(idx); break;
-                        default:
-                            assert(!"Not supported typesize");
-                            res = Zmm(idx);
+                            res = ZReg(idx);
                     }
             }
             return res;
@@ -237,12 +224,10 @@ struct rtus_driver_t : public jit_generator {
 
         const int simd_w = vlen_ / sizeof(float);
         ic_tail_ = ic_ % simd_w;
-
-        generate();
     }
 
     void loop_is() {
-        using namespace Xbyak;
+        using namespace Xbyak_aarch64;
 
         mov(reg_cur_src, reg_src);
         mov(reg_cur_iw, reg_iw_start);
@@ -252,60 +237,68 @@ struct rtus_driver_t : public jit_generator {
         L(is_loop);
 
         if (src_to_ws_) {
-            vmovups(reg_v, ptr[reg_cur_src]);
-            vmovups(ptr[reg_ws], reg_v);
+            ldr(reg_v, ptr(reg_cur_src));
+            str(reg_v, ptr(reg_ws));
         } else {
-            vmovups(reg_v, ptr[reg_ws]);
-            vmovups(ptr[reg_cur_src], reg_v);
-            for (int w = 1; w < stride_w_; ++w)
-                vmovups(ptr[reg_cur_src + w * vlen_], reg_zero);
+            ldr(reg_v, ptr(reg_ws));
+            str(reg_v, ptr(reg_cur_src));
+            for (int w = 1; w < stride_w_; ++w) {
+                add_imm(reg_tmp, reg_cur_src, w * vlen_, reg_tmp_imm);
+                str(reg_zero, ptr(reg_tmp));
+            }
         }
 
-        add(reg_ws, vlen_);
-        add(reg_cur_src, stride_w_ * vlen_);
+        add_imm(reg_ws, reg_ws, vlen_, reg_tmp_imm);
+        add_imm(reg_cur_src, reg_cur_src, stride_w_ * vlen_, reg_tmp_imm);
 
         // for 1d or stride_h=1 convolutions the loop over h should be skipped
         if (!(src_step_icb_ == iw_ || src_step_h_ == iw_)) {
             Label skip_h_step;
-            add(reg_cur_iw, stride_w_);
+            add_imm(reg_cur_iw, reg_cur_iw, stride_w_, reg_tmp_imm);
             cmp(reg_cur_iw, iw_);
-            jl(skip_h_step);
+            b(LT, skip_h_step); //jl(skip_h_step);
 
             if (src_to_ws_) {
-                add(reg_cur_src, (src_step_h_ - iw_) * vlen_);
+                add_imm(reg_cur_src, reg_cur_src, (src_step_h_ - iw_) * vlen_,
+                        reg_tmp_imm);
             } else {
                 mov(reg_cur_src_fin, reg_cur_src);
-                add(reg_cur_src_fin, (src_step_h_ - iw_) * vlen_);
+                add_imm(reg_cur_src_fin, reg_cur_src_fin,
+                        (src_step_h_ - iw_) * vlen_, reg_tmp_imm);
                 Label ih_loop;
                 L(ih_loop);
 
-                for (int w = 0; w < stride_w_; ++w)
-                    vmovups(ptr[reg_cur_src + w * vlen_], reg_zero);
+                for (int w = 0; w < stride_w_; ++w) {
+                    add_imm(reg_tmp, reg_cur_src, w * vlen_, reg_tmp_imm);
+                    str(reg_zero, ptr(reg_tmp));
+                }
 
-                add(reg_cur_src, stride_w_ * vlen_);
+                add_imm(reg_cur_src, reg_cur_src, stride_w_ * vlen_,
+                        reg_tmp_imm);
                 cmp(reg_cur_src, reg_cur_src_fin);
-                jl(ih_loop);
+                b(LT, ih_loop); //jl(ih_loop);
             }
-            xor_(reg_cur_iw, reg_cur_iw);
+            mov(reg_cur_iw, 0); //xor_(reg_cur_iw, reg_cur_iw);
             L(skip_h_step);
         }
 
-        sub(reg_cur_os, vlen_);
-        jnz(is_loop);
+        subs_imm(reg_cur_os, reg_cur_os, vlen_, reg_tmp_imm);
+        b(NE, is_loop); //jnz(is_loop);
 
         /* restore dst */
-        sub(reg_ws, reg_os);
+        sub(reg_ws, reg_ws, reg_os);
     }
 
     void loop_is_nspc() {
-        using namespace Xbyak;
+#if 0
+        using namespace Xbyak_aarch64;
 
         assert(is_nspc_);
 
         mov(reg_cur_src, reg_src);
         mov(reg_cur_iw, reg_iw_start);
 
-        if (isa == avx512_common || isa == sve) {
+        if (isa == avx512_common) {
             push(rcx); // preserve rcx, used for shift
             mov(reg_icb_remainder, reg_icb);
             and_(reg_icb_remainder,
@@ -325,7 +318,7 @@ struct rtus_driver_t : public jit_generator {
 
         auto load_reg = [=](const Xmm &vreg, const Reg64 &reg,
                                 const int64_t offset, const int load_size) {
-            if (isa == avx512_common || isa == sve) {
+            if (isa == avx512_common) {
                 const Address &addr = ptr[reg + offset];
                 switch (typesize_) {
                     case 4: vmovups(vreg, addr); break;
@@ -344,7 +337,7 @@ struct rtus_driver_t : public jit_generator {
 
         auto store_reg = [=](const Reg64 &reg, const Xmm &vreg,
                                  const int64_t offset, const int store_size) {
-            if (isa == avx512_common || isa == sve) {
+            if (isa == avx512_common) {
                 const Address &addr = ptr[reg + offset];
                 switch (typesize_) {
                     case 4: vmovups(addr, vreg); break;
@@ -367,7 +360,7 @@ struct rtus_driver_t : public jit_generator {
         const size_t w_step_factor = ic_ * typesize_;
         const size_t max_load_store_bytes = typesize_ == 4 ? 32 : 16;
         const size_t load_store_size
-                = isa == avx512_common || isa == sve ? vlen_ : max_load_store_bytes;
+                = isa == avx512_common ? vlen_ : max_load_store_bytes;
         size_t load_store_tail_size = (typesize_ == 1 ? max_load_store_bytes
                                                       : ic_tail_ * typesize_);
 
@@ -477,16 +470,19 @@ struct rtus_driver_t : public jit_generator {
             sub(reg_os, 1);
             jnz(is_loop);
         }
+#endif
     }
 
     void generate() {
-        using namespace Xbyak;
-        assert(isa == avx2 || isa == avx512_common || isa == avx512_core
-                || isa == avx512_mic || isa == sve);
+#if 1
+        using namespace Xbyak_aarch64;
+        assert(isa == sve_512);
 
         preamble();
 #define READ_PARAM(what) \
-    mov(reg_##what, ptr[abi_param1 + offsetof(call_params_t, what)])
+    ldr(reg_##what, \
+            ptr(abi_param1, \
+                    static_cast<int32_t>(offsetof(call_params_t, what))))
         READ_PARAM(src);
         READ_PARAM(icb);
         READ_PARAM(os);
@@ -496,48 +492,48 @@ struct rtus_driver_t : public jit_generator {
 
         if (!src_to_ws_) {
             switch (reg_zero.getBit() / 8) {
-                case 16 /*xmm*/: uni_vpxor(reg_zero, reg_zero, reg_zero); break;
-                case 32 /*ymm*/: {
-                    Xbyak::Ymm ymm_z(reg_zero.getIdx());
-                    uni_vpxor(ymm_z, ymm_z, ymm_z);
-                    break;
-                }
+                //case 16 /*xmm*/: uni_vpxor(reg_zero, reg_zero, reg_zero); break;
+                //case 32 /*ymm*/: {
+                //    Xbyak::Ymm ymm_z(reg_zero.getIdx());
+                //    uni_vpxor(ymm_z, ymm_z, ymm_z);
+                //    break;
+                //}
                 case 64 /*zmm*/: {
-                    Xbyak::Zmm zmm_z(reg_zero.getIdx());
-                    uni_vpxor(zmm_z, zmm_z, zmm_z);
+                    Xbyak_aarch64::ZRegS zreg_s(reg_zero.getIdx());
+                    fmov(zreg_s); // zero clear
                     break;
                 }
                 default: assert(!"rtus kernel failure");
             }
         }
         if (is_nspc_) {
-            loop_is_nspc();
+            assert(!"loop_is_nspc error");
+            //loop_is_nspc();
         } else {
-            shl(reg_os, vlen_shift_);
+            lsl(reg_os, reg_os, vlen_shift_);
 
             Label icb_loop;
             L(icb_loop);
 
             loop_is();
 
-            add(reg_ws, ws_step_icb_ * vlen_);
-            add(reg_src, src_step_icb_ * vlen_);
+            add_imm(reg_ws, reg_ws, ws_step_icb_ * vlen_, reg_tmp_imm);
+            add_imm(reg_src, reg_src, src_step_icb_ * vlen_, reg_tmp_imm);
 
-            sub(reg_icb, vlen_ / typesize_);
-            jnz(icb_loop, T_NEAR);
+            subs_imm(reg_icb, reg_icb, vlen_ / typesize_, reg_tmp_imm);
+            b(NE, icb_loop); //jnz(icb_loop, T_NEAR);
         }
 
-        uni_vzeroupper();
+        //uni_vzeroupper();
         postamble();
-        this->ker_ = reinterpret_cast<decltype(ker_)>(
-                const_cast<uint8_t *>(this->getCode()));
+#endif
     }
 };
 
 template <cpu_isa_t isa, typename conv_t>
-inline void init_rtus_driver(conv_t *self) {
+inline status_t init_rtus_driver(conv_t *self) {
     const auto &conf = *self->pd();
-    if (!conf.rtus_.reduce_src_) return;
+    if (!conf.rtus_.reduce_src_) return status::success;
 
     const auto &cd = *conf.desc();
     const int ndims = conf.ndims();
@@ -561,8 +557,10 @@ inline void init_rtus_driver(conv_t *self) {
     const size_t typesize
             = types::data_type_size(self->pd()->invariant_src_md()->data_type);
 
-    self->rtus_driver_ = new rtus_driver_t<isa>(iw, stride_w, src_step_h,
-            src_step_icb, ws_step_icb, src_to_ws, typesize, ic, is_nspc);
+    CHECK(safe_ptr_assign(self->rtus_driver_,
+            new rtus_driver_t<isa>(iw, stride_w, src_step_h, src_step_icb,
+                    ws_step_icb, src_to_ws, typesize, ic, is_nspc)));
+    return self->rtus_driver_->create_kernel();
 }
 
 inline int best_divider(int value, int min_divider, int max_divider,
