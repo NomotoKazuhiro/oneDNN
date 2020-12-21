@@ -1,21 +1,6 @@
 /*******************************************************************************
-* Copyright 2019-2020 FUJITSU LIMITED
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*******************************************************************************/
-
-/*******************************************************************************
 * Copyright 2016-2020 Intel Corporation
+* Copyright 2020 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -35,6 +20,8 @@
 #include "common/type_helpers.hpp"
 #include "common/utils.hpp"
 
+#include "cpu/cpu_primitive.hpp"
+
 #include "cpu/aarch64/jit_aarch64_sve_512_x8s8s32x_convolution.hpp"
 
 namespace dnnl {
@@ -48,19 +35,20 @@ using namespace dnnl::impl::utils;
 
 using namespace nstl;
 
-using jit_conv_ker_t = void (*)(jit_conv_call_s *);
-
 #define wht_blk_off(d, g, ...) \
     (pd()->with_groups() ? (d).blk_off((g), __VA_ARGS__) \
                          : (d).blk_off(__VA_ARGS__))
 
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
+status_t jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
         dst_type>::execute_forward_1d(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
     auto bias = CTX_IN_MEM(const char *, DNNL_ARG_BIAS);
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
+
+    DEFINE_ZERO_POINTS_BUFFER(src_zero_point, DNNL_ARG_SRC);
+    DEFINE_ZERO_POINTS_BUFFER(dst_zero_point, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
@@ -79,8 +67,14 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
 
     size_t offset = weights_d.size() - weights_d.additional_buffer_size();
     auto w = const_cast<wei_data_t *>(weights);
-    int32_t *compensation
-            = (!jcp.signed_input) ? reinterpret_cast<int32_t *>(&w[offset]) : 0;
+    int32_t *compensation = (!jcp.signed_input)
+            ? reinterpret_cast<int32_t *>(&w[offset])
+            : nullptr;
+    int32_t *zp_compensation = jcp.src_zero_point
+            ? reinterpret_cast<int32_t *>(&w[offset])
+                    + (!jcp.signed_input ? jcp.ngroups * jcp.oc : 0)
+            : nullptr;
+
     int oc_chunks = jcp.nb_oc / jcp.nb_oc_blocking;
     int nb_groups = jcp.nb_ch / jcp.nb_ch_blocking;
     int group_block = jcp.ch_block;
@@ -121,8 +115,14 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
             int ow_s = owb * jcp.ow_block;
             int iw_s = ow_s * jcp.stride_w;
 
-            p.bias = bias ? bias + (bias_d.blk_off(g_oc) * bia_dt_size) : 0;
-            p.compensation = (!jcp.signed_input) ? compensation + g_oc : 0;
+            p.bias = bias ? bias + (bias_d.blk_off(g_oc) * bia_dt_size)
+                          : nullptr;
+            p.compensation
+                    = (!jcp.signed_input) ? compensation + g_oc : nullptr;
+            p.zp_compensation
+                    = jcp.src_zero_point ? zp_compensation + g_oc : nullptr;
+            p.src_zero_point = jcp.src_zero_point ? src_zero_point : nullptr;
+            p.dst_zero_point = jcp.dst_zero_point ? dst_zero_point : nullptr;
             p.dst = dst + dst_d.blk_off(n, g_oc, ow_s);
             p.src = src + src_d.blk_off(n, g_ic, iw_s);
             p.filt = weights + wht_blk_off(weights_d, gb, ocb, 0);
@@ -133,7 +133,7 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
             p.b_overflow = 0;
             p.owb = owb;
 
-            kernel_->jit_ker(&p);
+            (*kernel_)(&p);
 
             ++start;
             switch (jcp.loop_order) {
@@ -157,15 +157,19 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
             }
         }
     });
+    return status::success;
 }
 
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
+status_t jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
         dst_type>::execute_forward_2d(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
     auto bias = CTX_IN_MEM(const char *, DNNL_ARG_BIAS);
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
+
+    DEFINE_ZERO_POINTS_BUFFER(src_zero_point, DNNL_ARG_SRC);
+    DEFINE_ZERO_POINTS_BUFFER(dst_zero_point, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
@@ -186,8 +190,14 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
 
     size_t offset = weights_d.size() - weights_d.additional_buffer_size();
     auto w = const_cast<wei_data_t *>(weights);
-    int32_t *compensation
-            = (!jcp.signed_input) ? reinterpret_cast<int32_t *>(&w[offset]) : 0;
+    int32_t *compensation = (!jcp.signed_input)
+            ? reinterpret_cast<int32_t *>(&w[offset])
+            : nullptr;
+    int32_t *zp_compensation = jcp.src_zero_point
+            ? reinterpret_cast<int32_t *>(&w[offset])
+                    + (!jcp.signed_input ? jcp.ngroups * jcp.oc : 0)
+            : nullptr;
+
     int oc_chunks = jcp.nb_oc / jcp.nb_oc_blocking_thr_chunk;
     int nb_groups = jcp.nb_ch;
     int work_amount = jcp.mb * nb_groups * oc_chunks * jcp.oh * jcp.nb_ow;
@@ -235,9 +245,9 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                 int iw_s = ow_s * jcp.stride_w;
 
                 auto bias_w = bias ? bias + (bias_d.blk_off(g_oc) * bia_dt_size)
-                                   : 0;
+                                   : nullptr;
                 int32_t *compensation_w
-                        = (!jcp.signed_input) ? compensation + g_oc : 0;
+                        = (!jcp.signed_input) ? compensation + g_oc : nullptr;
 
                 auto dst_w = dst + dst_d.blk_off(n, g_oc, oh_s, ow_s);
                 auto src_w = src + src_d.blk_off(n, g_ic, ih_s, iw_s);
@@ -258,14 +268,22 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                     int kh_padding = nstl::max(
                             0, jcp.kh - i_t_overflow - i_b_overflow);
 
-                    size_t wei_stride = (jcp.signed_input)
-                            ? i_t_overflow * wht_h_stride
-                            : 0;
+                    size_t wei_stride
+                            = (!jcp.signed_input || jcp.src_zero_point)
+                            ? 0
+                            : i_t_overflow * wht_h_stride;
                     p.src = src_w + i_t_overflow * dilate_h * src_h_stride;
                     p.dst = dst_w;
                     p.filt = wht_w + wei_stride;
                     p.bias = bias_w;
                     p.compensation = compensation_w;
+                    p.zp_compensation = jcp.src_zero_point
+                            ? zp_compensation + g_oc
+                            : nullptr;
+                    p.src_zero_point
+                            = jcp.src_zero_point ? src_zero_point : nullptr;
+                    p.dst_zero_point
+                            = jcp.dst_zero_point ? dst_zero_point : nullptr;
                     p.oc_blocks = ocb;
                     p.kh_padding = kh_padding;
                     p.scales = scales;
@@ -273,7 +291,8 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                     p.b_overflow = i_b_overflow;
                     p.owb = owb;
 
-                    kernel_->jit_ker(&p);
+                    (*kernel_)(&p);
+
                     src_w += src_h_stride * jcp.stride_h;
                     dst_w += dst_h_stride;
                 }
@@ -296,15 +315,19 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
             }
         }
     });
+    return status::success;
 }
 
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
+status_t jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
         dst_type>::execute_forward_2d_dw(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
     auto bias = CTX_IN_MEM(const char *, DNNL_ARG_BIAS);
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
+
+    DEFINE_ZERO_POINTS_BUFFER(src_zero_point, DNNL_ARG_SRC);
+    DEFINE_ZERO_POINTS_BUFFER(dst_zero_point, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
@@ -327,8 +350,13 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
 
     size_t offset = weights_d.size() - weights_d.additional_buffer_size();
     auto w = const_cast<wei_data_t *>(weights);
-    int32_t *compensation
-            = (!jcp.signed_input) ? reinterpret_cast<int32_t *>(&w[offset]) : 0;
+    int32_t *compensation = (!jcp.signed_input)
+            ? reinterpret_cast<int32_t *>(&w[offset])
+            : nullptr;
+    int32_t *zp_compensation = jcp.src_zero_point
+            ? reinterpret_cast<int32_t *>(&w[offset])
+                    + (!jcp.signed_input ? jcp.nb_ch * jcp.ch_block : 0)
+            : nullptr;
     int nb_groups = jcp.nb_ch / jcp.nb_ch_blocking;
     int group_block = jcp.ch_block;
 
@@ -346,10 +374,10 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                 int ow_s = owb * jcp.ow_block;
                 int iw_s = ow_s * jcp.stride_w;
 
-                auto bias_w
-                        = bias ? bias + (bias_d.blk_off(g) * bia_dt_size) : 0;
+                auto bias_w = bias ? bias + (bias_d.blk_off(g) * bia_dt_size)
+                                   : nullptr;
                 int32_t *compensation_w
-                        = !jcp.signed_input ? compensation + g : 0;
+                        = !jcp.signed_input ? compensation + g : nullptr;
 
                 auto dst_w = dst + dst_d.blk_off(n, g, oh_s, ow_s);
                 auto src_w = src + src_d.blk_off(n, g, ih_s, iw_s);
@@ -368,13 +396,20 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                 int kh_padding
                         = nstl::max(0, jcp.kh - i_t_overflow - i_b_overflow);
 
-                size_t wei_stride
-                        = !jcp.signed_input ? 0 : i_t_overflow * wht_h_stride;
+                size_t wei_stride = (!jcp.signed_input || jcp.src_zero_point)
+                        ? 0
+                        : i_t_overflow * wht_h_stride;
                 p.src = src_w + i_t_overflow * dilate_h * src_h_stride;
                 p.dst = dst_w;
                 p.filt = wht_w + wei_stride;
                 p.bias = bias_w;
                 p.compensation = compensation_w;
+                p.zp_compensation
+                        = jcp.src_zero_point ? zp_compensation + g : nullptr;
+                p.src_zero_point
+                        = jcp.src_zero_point ? src_zero_point : nullptr;
+                p.dst_zero_point
+                        = jcp.dst_zero_point ? dst_zero_point : nullptr;
                 p.oc_blocks = gb;
                 p.kh_padding = kh_padding;
                 p.scales = scales;
@@ -382,17 +417,21 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                 p.b_overflow = i_b_overflow;
                 p.owb = owb;
 
-                kernel_->jit_ker(&p);
+                (*kernel_)(&p);
             });
+    return status::success;
 }
 
 template <data_type_t src_type, data_type_t dst_type>
-void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
+status_t jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
         dst_type>::execute_forward_3d(const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const src_data_t *, DNNL_ARG_SRC);
     auto weights = CTX_IN_MEM(const wei_data_t *, DNNL_ARG_WEIGHTS);
     auto bias = CTX_IN_MEM(const char *, DNNL_ARG_BIAS);
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
+
+    DEFINE_ZERO_POINTS_BUFFER(src_zero_point, DNNL_ARG_SRC);
+    DEFINE_ZERO_POINTS_BUFFER(dst_zero_point, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
@@ -413,8 +452,13 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
 
     size_t offset = weights_d.size() - weights_d.additional_buffer_size();
     auto w = const_cast<wei_data_t *>(weights);
-    int32_t *compensation
-            = (!jcp.signed_input) ? reinterpret_cast<int32_t *>(&w[offset]) : 0;
+    int32_t *compensation = (!jcp.signed_input)
+            ? reinterpret_cast<int32_t *>(&w[offset])
+            : nullptr;
+    int32_t *zp_compensation = jcp.src_zero_point
+            ? reinterpret_cast<int32_t *>(&w[offset])
+                    + (!jcp.signed_input ? jcp.ngroups * jcp.oc : 0)
+            : nullptr;
     int oc_chunks = jcp.nb_oc / jcp.nb_oc_blocking_thr_chunk;
     int nb_groups = jcp.nb_ch;
     int work_amount
@@ -465,24 +509,30 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                 int iw_s = ow_s * jcp.stride_w;
                 int id_s = -jcp.f_pad + od_s * jcp.stride_d;
                 int dilate_d = jcp.dilate_d + 1;
-                int d_f_overflow = div_up(max(0, -id_s), dilate_d);
-                int d_back_overflow = div_up(
-                        max(0, id_s - jcp.id + (jcp.kd - 1) * dilate_d + 1),
-                        dilate_d);
+                int d_f_overflow
+                        = nstl::min(jcp.kd, div_up(max(0, -id_s), dilate_d));
+                int d_back_overflow = nstl::min(jcp.kd,
+                        div_up(max(0,
+                                       id_s - jcp.id + (jcp.kd - 1) * dilate_d
+                                               + 1),
+                                dilate_d));
 
                 int kd_padding
                         = nstl::max(0, jcp.kd - d_f_overflow - d_back_overflow);
 
                 auto bias_w = bias ? bias + (bias_d.blk_off(g_oc) * bia_dt_size)
-                                   : 0;
+                                   : nullptr;
                 int32_t *compensation_w
-                        = (!jcp.signed_input) ? compensation + g_oc : 0;
+                        = (!jcp.signed_input) ? compensation + g_oc : nullptr;
 
                 auto dst_w = dst + dst_d.blk_off(n, g_oc, od_s, oh_s, ow_s);
                 auto src_w = src + src_d.blk_off(n, g_ic, id_s, ih_s, iw_s)
                         + d_f_overflow * dilate_d * src_d_stride;
                 auto wht_w = weights + wht_blk_off(weights_d, g, ocb, 0)
-                        + (!jcp.signed_input ? 0 : d_f_overflow) * wht_d_stride;
+                        + ((!jcp.signed_input || jcp.src_zero_point)
+                                          ? 0
+                                          : d_f_overflow)
+                                * wht_d_stride;
 
                 auto scales = &oscales[jcp.is_oc_scale * g_oc];
 
@@ -499,12 +549,22 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                     int kh_padding = nstl::max(
                             0, jcp.kh - i_t_overflow - i_b_overflow);
 
-                    size_t wei_stride = (jcp.signed_input) ? wht_h_stride : 0;
+                    size_t wei_stride
+                            = (!jcp.signed_input || jcp.src_zero_point)
+                            ? 0
+                            : wht_h_stride * i_t_overflow;
                     p.src = src_w + i_t_overflow * dilate_h * src_h_stride;
                     p.dst = dst_w;
-                    p.filt = wht_w + i_t_overflow * wei_stride;
+                    p.filt = wht_w + wei_stride;
                     p.bias = bias_w;
                     p.compensation = compensation_w;
+                    p.zp_compensation = jcp.src_zero_point
+                            ? zp_compensation + g_oc
+                            : nullptr;
+                    p.src_zero_point
+                            = jcp.src_zero_point ? src_zero_point : nullptr;
+                    p.dst_zero_point
+                            = jcp.dst_zero_point ? dst_zero_point : nullptr;
                     p.oc_blocks = ocb;
                     p.kh_padding = kh_padding;
                     p.kd_padding = kd_padding;
@@ -515,7 +575,7 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
                     p.back_overflow = d_back_overflow;
                     p.owb = owb;
 
-                    kernel_->jit_ker(&p);
+                    (*kernel_)(&p);
                     src_w += src_h_stride * jcp.stride_h;
                     dst_w += dst_h_stride;
                 }
@@ -540,6 +600,7 @@ void jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<src_type,
             }
         }
     });
+    return status::success;
 }
 
 template struct jit_aarch64_sve_512_x8s8s32x_convolution_fwd_t<data_type::s8,
