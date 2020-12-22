@@ -82,15 +82,15 @@ private:
     const XReg aux_reg_bcast_data = x14;
     const XReg aux_reg_load_data = x15;
     const XReg imm_addr64 = x15;
-    const XReg reg_reduce_pos_flag = x0; //rax;
+    const XReg reg_reduce_pos_flag = x7; //rax;
     const XReg aux1_reg_bcast_data = x3; //rbx;
     const XReg reg_bcast_loop_work = x3; //rbx;
     const XReg bcast_loop_iter = x2; //rdx; // Note: Fix me
     const XReg reg_load_loop_work = x6; //rsi;
     const XReg reg_rsp = x4; //rsp;
     const XReg aux_reg_output_data = x1; //abi_not_param1;
-    const XReg reduce_loop_iter = x7; //abi_param1;
-    const XReg reg_abi_param1 = x7; // abi_param1
+    const XReg reduce_loop_iter = x0; //abi_param1;
+    const XReg reg_abi_param1 = x0; // abi_param1
     // zero-point computation
     const XReg reg_zp_compensation = aux_reg_load_data; // x15
     const XReg reg_src_zero_point = aux_reg_bcast_data; // x14

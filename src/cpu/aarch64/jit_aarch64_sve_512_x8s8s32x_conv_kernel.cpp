@@ -1434,7 +1434,8 @@ status_t jit_aarch64_sve_512_x8s8s32x_fwd_kernel::init_conf(
     const auto &p = attr.post_ops_;
     const int eltwise_ind = p.find(primitive_kind::eltwise);
     jcp.with_eltwise = eltwise_ind != -1;
-    if (jcp.with_eltwise) jcp.eltwise = p.entry_[eltwise_ind].eltwise;
+    //    if (jcp.with_eltwise) jcp.eltwise = p.entry_[eltwise_ind].eltwise;
+    if (jcp.with_eltwise) return status::unimplemented;
 
     jcp.ver = ver_sve;
     jcp.is_fast_depthwise = true && jcp.is_depthwise
