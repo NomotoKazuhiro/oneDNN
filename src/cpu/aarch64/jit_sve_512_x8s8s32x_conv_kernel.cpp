@@ -1390,6 +1390,11 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
 
     const auto &p = attr.post_ops_;
 
+    const auto zp = attr.zero_points_;
+    jcp.dst_zero_point = !zp.has_default_values(DNNL_ARG_DST);
+    jcp.src_zero_point = !zp.has_default_values(DNNL_ARG_SRC);
+    if (jcp.dst_zero_point || jcp.src_zero_point) return status::unimplemented;
+
     jcp.ver = ver_sve;
     jcp.is_fast_depthwise = true && jcp.is_depthwise
             && jcp.ngroups % jcp.ch_block == 0; /* groups not multiple of
@@ -1615,6 +1620,9 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
             = (weights_d.extra().flags & memory_extra_flags::scale_adjust)
             ? weights_d.extra().scale_adjust
             : 1.f;
+
+    int ch_block = jcp.is_depthwise ? jcp.ch_block : jcp.ic_block;
+    if (ch_block != 16) return status::unimplemented;
 
     return status::success;
 }

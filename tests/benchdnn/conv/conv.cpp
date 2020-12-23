@@ -354,12 +354,19 @@ int fill_src(
 int fill_wei(
         const prb_t *prb, dnn_mem_t &mem_dt, dnn_mem_t &mem_fp, res_t *res) {
     const bool wino_s8 = prb->alg == WINO && prb->cfg[WEI].dt == dnnl_s8;
-    const bool s8_s8
-            = prb->cfg[WEI].dt == dnnl_s8 && prb->cfg[SRC].dt == dnnl_s8;
     const bool is_def_zp = prb->attr.zero_points.is_def(DNNL_ARG_SRC);
     const bool diff_data_type = mem_dt.dt() != mem_fp.dt();
+#if DNNL_AARCH64
+    const bool s8_u8
+            = prb->cfg[WEI].dt == dnnl_s8 && prb->cfg[SRC].dt == dnnl_u8;
+    const bool check_reorder
+            = diff_data_type && !wino_s8 && !s8_u8 && is_def_zp;
+#else
+    const bool s8_s8
+            = prb->cfg[WEI].dt == dnnl_s8 && prb->cfg[SRC].dt == dnnl_s8;
     const bool check_reorder
             = diff_data_type && !wino_s8 && !s8_s8 && is_def_zp;
+#endif
 
     dnn_mem_t extra_mem;
     if (check_reorder) {
@@ -389,7 +396,11 @@ int fill_wei(
         SAFE(mem_fp.reorder(mem_dt), WARN);
         SAFE(compare_wei(prb, mem_fp, mem_00, res), WARN);
     }
+#if DNNL_AARCH64
+    if ((s8_u8 || !is_def_zp) && is_cpu()) {
+#else
     if ((s8_s8 || !is_def_zp) && is_cpu()) {
+#endif
         // Check that s8 -> s8_comp exists in the library since users may have
         // already quantized data.
         dnn_mem_t mem_fp_s8(mem_fp.md_, dnnl_s8, get_test_engine());
