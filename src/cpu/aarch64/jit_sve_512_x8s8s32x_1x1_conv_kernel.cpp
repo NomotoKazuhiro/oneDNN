@@ -921,24 +921,8 @@ bool jit_sve_512_x8s8s32x_1x1_conv_kernel::post_ops_ok(
     using namespace primitive_kind;
     const auto &p = attr.post_ops_;
 
-    auto is_eltwise = [&](int idx) { return p.entry_[idx].is_eltwise(); };
-    auto is_convolution
-            = [&](int idx) { return p.entry_[idx].is_convolution(); };
-
-    int dw_idx = p.find(primitive_kind::convolution);
-    int len = dw_idx != -1 ? dw_idx + 1 : p.len();
-
-    switch (len) {
-        case 0: return true;
-        case 1: return is_eltwise(0) || p.contain(sum, 0) || is_convolution(0);
-        case 2:
-            return (p.contain(sum, 0) && is_eltwise(1))
-                    || (p.contain(sum, 1) && is_eltwise(0))
-                    || (is_eltwise(0) && is_convolution(1));
-        default: return false;
-    }
-
-    return false;
+    /* At this time, post_op is not supported. */
+    return p.len() ? false : true;
 }
 
 status_t jit_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
