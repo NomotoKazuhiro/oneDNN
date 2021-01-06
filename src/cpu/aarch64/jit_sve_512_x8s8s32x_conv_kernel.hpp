@@ -64,17 +64,17 @@ private:
     } ic_block_t;
 
     /* data regs */
-    const XReg reg_ptr_scales = x7; //rax;
-    const XReg aux_reg_saturation = x7; //rax;
-    const XReg reg_inp = x8; //r8;
-    const XReg reg_ker = x9; //r9;
-    const XReg reg_out = x10; //r10;
-    const XReg aux_reg_inp = x11; //r11;
-    const XReg reg_ptr_sum_scale = x11; //r11;
-    const XReg aux_reg_ker = x12; //r12;
-    const XReg reg_compensation = x14; //r14;
-    const XReg aux_reg_inp_d = x13; //r13;
-    const XReg aux_reg_ker_d = x15; //r15;
+    const XReg reg_ptr_scales = x7;
+    const XReg aux_reg_saturation = x7;
+    const XReg reg_inp = x8;
+    const XReg reg_ker = x9;
+    const XReg reg_out = x10;
+    const XReg aux_reg_inp = x11;
+    const XReg reg_ptr_sum_scale = x11;
+    const XReg aux_reg_ker = x12;
+    const XReg reg_compensation = x14;
+    const XReg aux_reg_inp_d = x13;
+    const XReg aux_reg_ker_d = x15;
     // Using 3d regs as depthwise_3d is not yet supported
     const XReg reg_inp_buffer_ptr = aux_reg_inp_d;
     const XReg aux_reg_inp_buffer_ptr = aux_reg_ker_d;
@@ -84,11 +84,11 @@ private:
     const XReg reg_dst_zero_point = reg_src_zero_point;
 
     /* counter regs */
-    const XReg reg_bias_alpha = x1; //abi_not_param1;
-    const XReg reg_param1 = x0; //abi_param1;
-    const XReg reg_oi = x3; //rbx;
-    const XReg reg_bias = x2; //rdx;
-    const XReg reg_oc_blocks = x6; //rsi;
+    const XReg reg_bias_alpha = x1;
+    const XReg reg_param1 = x0;
+    const XReg reg_oi = x3;
+    const XReg reg_bias = x2;
+    const XReg reg_oc_blocks = x6;
     const XReg reg_owb = aux_reg_ker;
     const XReg reg_scratch = reg_compensation;
     const XReg reg_kj = reg_ptr_scales;
@@ -118,7 +118,7 @@ private:
 
     const ZReg vmm_wei = ZReg(31);
     /* used during bias section of store_output */
-    const ZReg vmm_comp = ZReg(30); // only for signed input
+    const ZReg vmm_comp = ZReg(30); // only for unsigned input
     const ZReg vmm_bias = ZReg(31);
     /* used during post_op sum section of store_output */
     const ZReg vmm_prev_dst = ZReg(31);
@@ -127,8 +127,7 @@ private:
     const ZReg vmm_zero = ZReg(31);
 
     /* used in compute_ker (but set during prepare_output) */
-    const ZReg vmm_shift = vmm_comp; // only for signed input
-    /* used in compute_ker (but only for pre-VNNI machines) */
+    const ZReg vmm_shift = vmm_comp; // only for unsigned input
     const ZReg vmm_tmp = ZReg(28); // not used for depthwise
     const ZReg vmm_one
             = ZReg(29); // set at start of kernel, not used for depthwise.
@@ -139,7 +138,7 @@ private:
 
     /* registers use only for depthwise
        groups are always blocked by 16(padded if needed),
-       hence use only Zmm registers */
+       hence use only ZReg registers */
     const ZReg zmm_wei = ZReg(31);
     ZReg zmm_tmp = ZReg(0);
     ZReg zmm_src = ZReg(0);
@@ -211,7 +210,6 @@ private:
     void generate() override;
     void cvt2ps(data_type_t type_in, ZReg ymm_in, const XReg reg_base,
             const int offset, bool mask_flag);
-    // Vmm vmm_mask(const Vmm vmm_in, bool mask_flag, bool store = false);
     void vmm_mask_all_one();
     void vmm_load_src(ZReg src, XReg reg_addr, bool mask_flag);
 

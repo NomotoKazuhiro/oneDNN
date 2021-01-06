@@ -74,10 +74,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::cvt2ps(data_type_t type_in,
     auto vmm = vmm_in;
     auto reg_addr = get_comp_addr_reg(reg_base, offset);
     switch (type_in) {
-        // case data_type::f32:
-        // case data_type::s32: vmovups(vmm, addr); break;
-        // case data_type::s8: vpmovsxbd(vmm, addr); break;
-        // case data_type::u8: vpmovzxbd(vmm, addr); break;
         case data_type::f32:
         case data_type::s32:
             if (mask_flag)
@@ -115,9 +111,7 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::cvt2ps(data_type_t type_in,
             break;
         default: assert(!"unsupported data type");
     }
-    if (type_in != data_type::f32)
-        scvtf(vmm_in.s, mask_all_one,
-                vmm_in.s); //< vcvtdq2ps(vmm_in, vmm_in);
+    if (type_in != data_type::f32) scvtf(vmm_in.s, mask_all_one, vmm_in.s);
 }
 
 template <typename Vmm>
@@ -149,30 +143,26 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
         int scale_offset = jcp.is_oc_scale * (sizeof(float) * k * oc_block);
         if (jcp.with_bias) {
             int bias_offset = jcp.typesize_bia * k * oc_block;
-            // auto bias_addr = SVE_compress_addr(reg_bias, bias_offset);
 
             cvt2ps(jcp.bia_dt, vmm_bias, reg_bias, bias_offset, mask_flag);
         }
         if (!jcp.signed_input) {
             int comp_offset = sizeof(int32_t) * k * oc_block;
-            // auto comp_addr = SVE_compress_addr(reg_compensation, comp_offset);
 
             cvt2ps(data_type::s32, vmm_comp, reg_compensation, comp_offset,
                     mask_flag);
         }
-        /* add to zmm_accum: compensation, bias and permute */
+        /* add to accum: compensation, bias and permute */
         if (!jcp.is_fast_depthwise && jcp.signed_input) {
-            // vmovups(vmm_comp, SVE_compress_addr(reg_ptr_scales, scale_offset));
             auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
             ld1w(vmm_comp.s, mask_all_one, ptr(reg_addr));
         }
         for (int j = 0; j < ur_w; j++) {
             auto vmm = vmm_out(j, k);
             if (jcp.is_fast_depthwise) {
-                // vpermd(zmm_out(j, k), zmm_permute, zmm_out(j, k));
                 auto zmm = zmm_out(j, k);
                 auto zmm_tmp1 = ZReg(31);
-                auto zmm_tmp2 = ZReg(30); //TODO: Check index
+                auto zmm_tmp2 = ZReg(30);
                 auto zmm_tmp3 = ZReg(29);
                 sub(reg_stack, reg_stack, 64);
                 str(zmm_tmp1, ptr(reg_stack));
@@ -195,22 +185,17 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
                 ldr(zmm_tmp1, ptr(reg_stack));
                 add(reg_stack, reg_stack, 64);
             }
-            // vcvtdq2ps(vmm, vmm);
             scvtf(vmm.s, mask_all_one, vmm.s);
             if (!jcp.signed_input) fsub(vmm.s, vmm.s, vmm_comp.s);
             if (jcp.with_bias) fadd(vmm.s, vmm.s, vmm_bias.s);
 
-            // const Vmm vmm_k = vmm_mask(vmm, mask_flag);
             if (!jcp.is_fast_depthwise && jcp.signed_input) {
-                // vmulps(vmm_k, vmm, vmm_comp);
                 fmul(vmm.s, vmm.s, vmm_comp.s);
                 if (mask_flag) {
                     not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
                     mov(vmm.s, mask_tmp / T_m, 0);
                 }
             } else {
-                // vmulps(vmm_k, vmm,
-                //        SVE_compress_addr(reg_ptr_scales, scale_offset));
                 auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
                 sub(reg_stack, reg_stack, 64);
                 str(vmm_tmp, ptr(reg_stack));
@@ -235,14 +220,12 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
                 int aux_output_offset = jcp.typesize_out
                         * (k * oc_block
                                 + j * jcp.oc_without_padding * jcp.ngroups);
-                // auto addr = SVE_compress_addr(reg_out, aux_output_offset);
                 auto vmm = vmm_out(j, k);
                 cvt2ps(jcp.dst_dt, vmm_prev_dst, reg_out, aux_output_offset,
                         mask_flag);
                 if (*p_sum_scale == 1.f) {
                     fadd(vmm.s, vmm.s, vmm_prev_dst.s);
                 } else {
-                    // vfmadd231ps(vmm, vmm_prev_dst, zword_b[reg_ptr_sum_scale]);
                     sub(reg_stack, reg_stack, 64);
                     str(vmm_tmp, ptr(reg_stack));
                     ld1rw(vmm_tmp.s, mask_all_one / T_z,
@@ -257,17 +240,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
 
     // Properly saturate the accumulators for integer datatypes
     if (one_of(jcp.dst_dt, u8, s8, s32)) {
-#if 0
-        init_saturate_f32(
-                vmm_zero, vmm_saturation, aux_reg_saturation, f32, jcp.dst_dt);
-        for (int k = 0; k < nb_oc_block; k++) {
-            for (int j = 0; j < ur_w; j++) {
-                Vmm vmm = vmm_out(j, k);
-                saturate_f32(vmm, vmm_zero, vmm_saturation, jcp.dst_dt);
-                vcvtps2dq(vmm, vmm);
-            }
-        }
-#else
         if (jcp.dst_dt == data_type::u8) {
             eor(vmm_zero.d, vmm_zero.d, vmm_zero.d);
         }
@@ -279,11 +251,9 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
             for (int j = 0; j < ur_w; j++) {
                 auto vmm = vmm_out(j, k);
                 if (jcp.dst_dt == data_type::u8) {
-                    // vmaxps(vmm, vmm, vmm_lbound);
                     fmaxnm(vmm.s, mask_all_one, vmm_zero.s);
                     fmax(vmm.s, mask_all_one, vmm_zero.s);
                 }
-                // vminps(vmm, vmm, vmm_ubound);
                 fminnm(vmm.s, mask_all_one, vmm_saturation.s);
                 fmin(vmm.s, mask_all_one, vmm_saturation.s);
 
@@ -291,7 +261,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
                 fcvtzs(vmm.s, mask_all_one, vmm.s);
             }
         }
-#endif
     }
 
     /* write out register to output_addr */
@@ -316,22 +285,18 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::store_output(
             add_imm(reg_tmp_adr, base, re, reg_tmp_imm);
 
             auto vmm = vmm_out(j, k);
-            // const Vmm r_vmm = vmm_mask(vmm, mask_flag, true);
 
             auto _mask = mask_flag ? ktail_mask : mask_all_one;
             switch (jcp.dst_dt) {
                 case data_type::f32:
                 case data_type::s32:
-                    // vmovups(addr, r_vmm); break;
                     st1w(vmm.s, _mask, ptr(reg_tmp_adr));
                     break;
-                // case data_type::s8: vpmovsdb(addr, r_vmm); break;
                 case data_type::s8:
                     smin(vmm.s, 127);
                     smax(vmm.s, -128);
                     st1b(vmm.s, _mask, ptr(reg_tmp_adr));
                     break;
-                // case data_type::u8: //< vpmovusdb(addr, r_vmm); break;
                 case data_type::u8:
                     umin(vmm.s, 255);
                     st1b(vmm.s, _mask, ptr(reg_tmp_adr));
@@ -373,7 +338,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
     };
 
     auto compute = [=](ZReg vreg_acc, ZReg vreg_wei, ZReg vreg_src) {
-        // vpdpbusd(vreg_acc, vreg_src, vreg_wei);
         sdot(vreg_acc.s, vreg_src.b, vreg_wei.b);
     };
 
@@ -407,14 +371,9 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
             for (int ii = ii_start; ii <= ii_end; ii++) {
                 int aux_input_offset = input_offset2(ii, ci);
                 auto zmm_inp_tmp = zmm_inp(ii, jcp.nb_ch_blocking);
-                // const Zmm zmm_inp_msk = mask_flag
-                //         ? zmm_inp_tmp | ktail_mask | T_z
-                //         : zmm_inp_tmp;
                 auto zmm_inp_msk = zmm_inp_tmp;
                 if (jcp.is_fast_depthwise) {
                     assert(!mask_flag);
-                    // vbroadcasti32x4(zmm_inp_msk,
-                    //         SVE_compress_addr(aux_reg_inp, aux_input_offset));
                     auto reg_addr
                             = get_comp_addr_reg(aux_reg_inp, aux_input_offset);
                     ldr(QReg(zmm_inp_msk.getIdx()), ptr(reg_addr));
@@ -423,8 +382,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
                     ptrue(mask_tmp.d, VL4);
                     splice(zmm_inp_msk.d, mask_tmp.d, zmm_inp_msk.d);
                 } else {
-                    // vpmovzxbd(zmm_inp_msk,
-                    //         SVE_compress_addr(aux_reg_inp, aux_input_offset));
                     auto reg_addr
                             = get_comp_addr_reg(aux_reg_inp, aux_input_offset);
                     auto zmm_tmp = ZReg(31);
@@ -457,8 +414,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
         for (int ki = 0; ki < jcp.kw; ki++) {
             int aux_kernel_offset = kernel_offset(ci, ki);
             if (jcp.is_fast_depthwise) {
-                // vbroadcasti32x4(zmm_wei,
-                //         SVE_compress_addr(aux_reg_ker, aux_kernel_offset));
                 auto reg_addr
                         = get_comp_addr_reg(aux_reg_ker, aux_kernel_offset);
                 ldr(QReg(zmm_wei.getIdx()), ptr(reg_addr));
@@ -466,13 +421,10 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
                 splice(zmm_wei.d, mask_tmp.d, zmm_wei.d);
                 ptrue(mask_tmp.d, VL4);
                 splice(zmm_wei.d, mask_tmp.d, zmm_wei.d);
-                // vmovdqu8(zmm_wei | kblend_mask | T_z, zmm_wei);
                 not_(mask_tmp.b, mask_all_one, kblend_mask.b);
                 mov(zmm_wei.b, kblend_mask / T_m, zmm_wei.b);
                 mov(zmm_wei.b, mask_tmp / T_m, 0);
             } else {
-                // vpmovsxbd(zmm_wei,
-                //         SVE_compress_addr(aux_reg_ker, aux_kernel_offset));
                 auto reg_addr
                         = get_comp_addr_reg(aux_reg_ker, aux_kernel_offset);
                 auto zmm_tmp = ZReg(30);
@@ -490,7 +442,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
                 for (int oi = 0; oi < ur_w; oi++)
                     compute(zmm_out(oi, ci), zmm_wei, zmm_shifted_zero);
             } else {
-                // const Zmm r_zmm_src = mask_flag ? zmm_src | ktail_mask : zmm_src;
                 auto r_zmm_src = zmm_src;
                 int oi_start = get_ow_start(ki, pad_l);
                 int oi_end = get_ow_end(ur_w, ki, pad_r);
@@ -505,9 +456,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
                             int aux_input_offset = input_offset3(oi, ci, ki);
                             if (jcp.is_fast_depthwise) {
                                 assert(!mask_flag);
-                                // vbroadcasti32x4(r_zmm_src,
-                                //         SVE_compress_addr(aux_reg_inp,
-                                //                         aux_input_offset));
                                 auto reg_addr = get_comp_addr_reg(
                                         aux_reg_inp, aux_input_offset);
                                 ldr(QReg(r_zmm_src.getIdx()), ptr(reg_addr));
@@ -516,9 +464,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::compute_ker_dw(int ur_w, int pad_l,
                                 ptrue(mask_tmp.d, VL4);
                                 splice(r_zmm_src.d, mask_tmp.d, r_zmm_src.d);
                             } else {
-                                // vpmovzxbd(r_zmm_src,
-                                //         SVE_compress_addr(aux_reg_inp,
-                                //                   aux_input_offset));
                                 auto reg_addr = get_comp_addr_reg(
                                         aux_reg_inp, aux_input_offset);
                                 auto zmm_tmp = ZReg(31);
@@ -617,8 +562,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::compute_ker(int ur_w, int pad_l,
                             auto xmm_tmp = VReg16B(
                                     vmm_inp(jj, nb_oc_block).getIdx());
                             for (int r = 0; r < ic_tail_size; ++r) {
-                                // vpinsrb(xmm_tmp, xmm_tmp,
-                                //     ptr[aux_reg_inp + aux_input_offset + r], r);
                                 add_imm(reg_tmp0_adr, aux_reg_inp,
                                         (aux_input_offset + r), reg_tmp0_imm);
                                 ldrb(WReg(reg_tmp1_imm.getIdx()),
@@ -626,14 +569,9 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::compute_ker(int ur_w, int pad_l,
                                 ins_(VReg16B(xmm_tmp.getIdx())[r],
                                         WReg(reg_tmp1_imm.getIdx()));
                             }
-                            // vpbroadcastd(vmm_inp(jj, nb_oc_block), xmm_tmp);
                             dup(vmm_inp(jj, nb_oc_block).s,
                                     ZRegS(xmm_tmp.getIdx())[0]);
                         } else {
-                            // vpbroadcastd(vmm_inp(jj, nb_oc_block),
-                            //         SVE_compress_addr(
-                            //                      aux_reg_inp, aux_input_offset));
-
                             auto base = aux_reg_inp;
                             auto re = get_offset(aux_input_offset);
 
@@ -940,14 +878,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::vmm_mask_all_one() {
     ptrue(mask_all_one.b, VL16);
 }
 
-#if 0
-template <>
-void _jit_sve_512_x8s8s32x_fwd_kernel<Ymm>::vmm_mask_all_one() {
-    mask_gflag = false;
-    ptrue(mask_all_one.b, VL32);
-}
-#endif
-
 template <>
 void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::vmm_mask_all_one() {
     mask_gflag = true;
@@ -967,22 +897,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::vmm_load_src(
     }
     ld1b(src.b, mask_tmp, ptr(reg_addr));
 }
-
-#if 0
-template <>
-void _jit_sve_512_x8s8s32x_fwd_kernel<Ymm>::vmm_load_src(
-        ZReg src, XReg reg_addr, bool mask_flag) {
-    if (mask_flag) {
-        eor(mask_tmp.b, mask_all_one, mask_tmp.b, mask_tmp.b);
-        eor(mask_tmp2.b, mask_all_one, mask_tmp2.b, mask_tmp2.b);
-        uzp1(mask_tmp.h, ktail_mask.h, mask_tmp.h);
-        uzp1(mask_tmp.b, mask_tmp.b, mask_tmp2.b);
-    } else {
-        ptrue(mask_tmp.b, VL8);
-    }
-    ld1b(src.b, mask_tmp, ptr(reg_addr));
-}
-#endif
 
 template <>
 void _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>::vmm_load_src(
@@ -1017,7 +931,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::generate() {
     if (jcp.is_depthwise) {
         int idx = jcp.max_regs_ur - 1;
         if (!jcp.is_resrc_depthwise) zmm_src = ZReg(++idx);
-        // if (jcp.ver != ver_vnni) zmm_tmp = ZReg(++idx);
         if (jcp.is_fast_depthwise) zmm_permute = ZReg(++idx);
         if (!jcp.signed_input) zmm_shifted_zero = ZReg(++idx);
         // due to extra register used for shifts and compensations
@@ -1031,16 +944,6 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::generate() {
         /* In case of fused depthwise convolution, `param.src` is not a pointer
         to input, instead it points to a buffer containing pointers to
         consecutive rows of input in format wc with c=jcp.dw_conv_buffer_oc.
-        Example: [ptr_to_inp_row0, ptr_to_inp_row1, ptr_to_inp_row2].
-        Traverse the data as
-            mov(reg_data, ptr[reg_input_buffer_ptr])
-            ... process row0 ...
-            add(reg_input_buffer_ptr, sizeof(void*))
-            mov(reg_data, ptr[reg_input_buffer_ptr])
-            ... process row1 ...
-            add(reg_input_buffer_ptr, sizeof(void*))
-            mov(reg_data, ptr[reg_input_buffer_ptr])
-            ... process row2 ...
         */
         mov_imm(reg_inp, 0);
     } else {
@@ -1055,11 +958,8 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::generate() {
                 : jcp.oc_without_padding % jcp.oc_block;
         int mask = (1 << tail_size) - 1;
         ldr(reg_oc_blocks, ptr(reg_param1, GET_OFF(oc_blocks)));
-        // Reg32 regw_tmp = reg_oi.cvt32();
         auto regw_tmp = reg_oi;
-        // mov(regw_tmp, mask);
         mov(regw_tmp, mask);
-        // kmovw(ktail_mask, regw_tmp);
         auto vmm_tmp1 = ZReg(31);
         auto vmm_tmp2 = ZReg(30);
         index(vmm_tmp1.s, 0, 1);
@@ -1071,20 +971,16 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::generate() {
     }
     if (jcp.is_fast_depthwise) {
         // prepare mask register for blending weights
-        // mov(reg_scratch, 0x8888444422221111);
         movk(reg_scratch, uint16_t(0x1111), 0);
         movk(reg_scratch, uint16_t(0x2222), 16);
         movk(reg_scratch, uint16_t(0x4444), 32);
         movk(reg_scratch, uint16_t(0x8888), 48);
-        // kmovq(kblend_mask, reg_scratch);
         sub(reg_stack, reg_stack, 8);
         str(reg_scratch, ptr(reg_stack));
         ldr(kblend_mask, ptr(reg_stack));
         add(reg_stack, reg_stack, 8);
         // load permute indices from data section
-        // mov(reg_scratch, permute_index_table);
         adr(reg_scratch, permute_index_table);
-        // vmovdqu32(zmm_permute, ptr[reg_scratch]);
         ld1w(zmm_permute.s, mask_all_one, ptr(reg_scratch));
     }
 
@@ -1264,9 +1160,7 @@ void _jit_sve_512_x8s8s32x_fwd_kernel<Vmm>::generate() {
         const uint32_t _idx[]
                 = {0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15};
         for (size_t i = 0; i < sizeof(_idx) / sizeof(_idx[0]); ++i)
-            //            dd(_idx[i]);
             dw(_idx[i]);
-        //        binCommit();
     }
 }
 
@@ -1374,10 +1268,7 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
                 && ((jcp.ic % jcp.ic_block != 0)
                         || (jcp.oc % jcp.oc_block != 0))) {
             /* For grouped convolutions, oneDNN doesn't support padding.
-               When channels per group is not multiple of 16:
-                - Use Ymm when channels per group is multiple of 8,
-                - Use Xmm when channels per group is multiple of 4,
-                - Otherwise return unimplemented. */
+               When channels per group is not multiple of 4, 8, 16, return unimplemented. */
             jcp.ic_block = (jcp.ic % 8 == 0) && (jcp.oc % 8 == 0) ? 8 : 4;
             jcp.oc_block = jcp.ic_block;
         }
@@ -1405,7 +1296,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
                 - !jcp.signed_input
                 - (!jcp.signed_input || jcp.need_saturation); // both alias
     } else {
-        // jcp.max_regs_ur = jcp.ver == ver_vnni ? 31 : 28;
         jcp.max_regs_ur = 31;
     }
 
