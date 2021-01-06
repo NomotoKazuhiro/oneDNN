@@ -1331,7 +1331,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
     jcp.stride_w = cd.strides[ndims - 3];
     jcp.with_bias = cd.bias_desc.format_kind != format_kind::undef;
 
-    jcp.ur_h = 1; /* no code-unrolling by h so far */
     jcp.dilate_d = is_3d ? cd.dilates[0] : 0;
     jcp.dilate_h = is_1d ? 0 : cd.dilates[ndims - 4];
     jcp.dilate_w = cd.dilates[ndims - 3];
@@ -1395,7 +1394,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
     jcp.src_zero_point = !zp.has_default_values(DNNL_ARG_SRC);
     if (jcp.dst_zero_point || jcp.src_zero_point) return status::unimplemented;
 
-    jcp.ver = ver_sve;
     jcp.is_fast_depthwise = true && jcp.is_depthwise
             && jcp.ngroups % jcp.ch_block == 0; /* groups not multiple of
     ch_block (= 16) would require byte masking for load from src */
@@ -1509,15 +1507,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
 
     // choose nb_oc work chunk size for distribution within threads
     int max_threading_nb_oc_chunk = 4;
-    // Performance improvements for googlenet_v3 and resnet_50 with mb = 1;
-    // TODO: generalize this condition and rewrite it in appropriate manner
-    //    int ncores_per_socket = (int)cpu().getNumCores(
-    //            Xbyak::util::IntelCpuTopologyLevel::CoreLevel);
-    int ncores_per_socket = (int)2;
-    if (jcp.ver == ver_sve && jcp.mb == 1 && jcp.kh == 3 && jcp.kw == 3
-            && jcp.stride_w == 1 && jcp.ic % 64 == 0
-            && jcp.nthr <= ncores_per_socket)
-        max_threading_nb_oc_chunk = 2;
     jcp.nb_oc_blocking_thr_chunk
             = nstl::min(max_threading_nb_oc_chunk, jcp.nb_oc);
     for (; jcp.nb_oc_blocking_thr_chunk > 1; jcp.nb_oc_blocking_thr_chunk--) {
@@ -1526,21 +1515,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
 
     // choose oc blocking for computational kernel
     jcp.nb_oc_blocking = jcp.nb_oc_blocking_thr_chunk;
-
-    // Performance improvements for googlenet_v3 with mb = 1;
-    // TODO: generalize this condition and rewrite it in appropriate manner
-    const int size_treshold_for_nb_oc_blocking_reduction = 17;
-    if (jcp.mb == 1 && jcp.ow <= size_treshold_for_nb_oc_blocking_reduction
-            && jcp.stride_w == 1 && jcp.nthr <= ncores_per_socket
-            && !(jcp.kh == 1 && jcp.kw == 3)
-            && !(jcp.kh >= 7 && jcp.oc % 64 == 0)) {
-        const int max_nb_oc_blocking = 2;
-        jcp.nb_oc_blocking = nstl::min(max_nb_oc_blocking, jcp.nb_oc);
-        for (; jcp.nb_oc_blocking > 1; jcp.nb_oc_blocking--)
-            if (jcp.nb_oc_blocking_thr_chunk % jcp.nb_oc_blocking == 0
-                    && is_oc_blocking_ok(jcp.nb_oc_blocking))
-                break;
-    }
 
     if (jcp.is_resrc_depthwise)
         jcp.ur_w = (jcp.max_regs_ur - jcp.kw + jcp.stride_w)
@@ -1607,8 +1581,6 @@ status_t jit_sve_512_x8s8s32x_fwd_kernel::init_conf(jit_conv_conf_t &jcp,
 
     pick_loop_order(jcp, jcp.nthr);
 
-    jcp.nb_ic_L2 = jcp.nb_ic;
-
     const auto &oscales = attr.output_scales_;
     jcp.is_oc_scale = oscales.mask_ == 1 << 1;
 
@@ -1632,10 +1604,6 @@ void jit_sve_512_x8s8s32x_fwd_kernel::init_scratchpad(
         const primitive_attr_t &attr) {}
 
 template struct _jit_sve_512_x8s8s32x_fwd_kernel<ZReg>;
-#if 0
-template struct _jit_sve_512_x8s8s32x_fwd_kernel<Ymm>;
-template struct _jit_sve_512_x8s8s32x_fwd_kernel<Xmm>;
-#endif
 } // namespace aarch64
 } // namespace cpu
 } // namespace impl

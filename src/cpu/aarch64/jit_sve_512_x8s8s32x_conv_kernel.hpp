@@ -24,9 +24,6 @@
 #include "cpu/aarch64/jit_generator.hpp"
 #include "cpu/aarch64/jit_primitive_conf.hpp"
 
-#define ADDMAX 4095
-#define MOVMAX 65535
-
 namespace dnnl {
 namespace impl {
 namespace cpu {
@@ -219,12 +216,8 @@ private:
     void vmm_load_src(ZReg src, XReg reg_addr, bool mask_flag);
 
     int get_offset(int raw_offt) {
-
-        assert(raw_offt <= INT_MAX);
-        auto offt = static_cast<int>(raw_offt);
-
+        auto offt = raw_offt;
         int scale = 0;
-
         const int EVEX_max_8b_offt = 0x200;
         if (EVEX_max_8b_offt <= offt && offt < 3 * EVEX_max_8b_offt) {
             offt = offt - 2 * EVEX_max_8b_offt;
