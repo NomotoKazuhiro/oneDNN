@@ -962,11 +962,11 @@ bool jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::post_ops_ok(
 
     switch (len) {
         case 0: return true;
-        case 1: return is_eltwise(0) || p.contain(sum, 0) || is_convolution(0);
-        case 2:
-            return (p.contain(sum, 0) && is_eltwise(1))
-                    || (p.contain(sum, 1) && is_eltwise(0))
-                    || (is_eltwise(0) && is_convolution(1));
+//        case 1: return is_eltwise(0) || p.contain(sum, 0) || is_convolution(0);
+//        case 2:
+//            return (p.contain(sum, 0) && is_eltwise(1))
+//                    || (p.contain(sum, 1) && is_eltwise(0))
+//                    || (is_eltwise(0) && is_convolution(1));
         default: return false;
     }
 
@@ -1329,6 +1329,8 @@ status_t jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel::init_conf(
     // only common and per-oc-channel scales are supported
     const bool oscales_ok = one_of(oscales.mask_, 0, 1 << 1);
     if (!oscales_ok) return status::unimplemented;
+
+    if (jcp.ic_block != 16) return status::unimplemented;
 
     return status::success;
 }
