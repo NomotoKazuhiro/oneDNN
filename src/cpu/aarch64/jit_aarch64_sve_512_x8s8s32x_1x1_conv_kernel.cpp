@@ -784,6 +784,7 @@ void _jit_aarch64_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::generate() {
     // vpbroadcastw(vmm_one, _t);
     dup(vmm_one.h, 0x1);
 
+    mov(reg_rsp, sp);
     subs(reg_rsp, reg_rsp, stack_space_needed);
 
     if (jcp.oc_without_padding != jcp.oc) {
