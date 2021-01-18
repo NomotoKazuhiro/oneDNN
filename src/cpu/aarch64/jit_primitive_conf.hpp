@@ -47,6 +47,15 @@ enum conv_loop_order_t {
     loop_nwcg
 };
 
+enum conv_1x1_loop_order_t {
+    loop_rbl,
+    loop_rlb,
+    loop_lbr,
+    loop_lrb,
+    loop_blr,
+    loop_brl
+};
+
 enum conv_kernel_kind_t { embd_bcast, expl_bcast };
 
 enum conv_harness_t {
@@ -273,6 +282,81 @@ struct jit_conv_call_s {
     int flags;
     int flags_prf;
     int oc_flag;
+};
+
+struct jit_1x1_conv_conf_t {
+    prop_kind_t prop_kind;
+    conv_version_t ver;
+
+    int ndims;
+    int mb;
+    int ngroups, ic, oc, oc_without_padding, ic_without_padding;
+    int id, ih, iw, od, oh, ow;
+    int f_pad, t_pad, l_pad;
+    int kd, kh, kw;
+    int stride_d, stride_h, stride_w;
+    format_tag_t src_tag, wei_tag, dst_tag; // temporary workaround
+    bool with_bias;
+    bool with_sum;
+    bool with_eltwise;
+    bool with_binary;
+    bool with_dw_conv;
+
+    post_ops_t post_ops;
+    post_ops_t::entry_t::eltwise_t eltwise;
+
+    int is, os;
+    int ic_block, oc_block;
+
+    int ur, ur_tail;
+
+    int reduce_dim, reduce_block, nb_reduce, nb_reduce_blocking,
+            nb_reduce_blocking_max;
+    int load_dim, load_block, nb_load, nb_load_blocking, nb_load_blocking_max,
+            nb_load_chunk;
+    int bcast_dim, bcast_block, nb_bcast, nb_bcast_blocking,
+            nb_bcast_blocking_max;
+
+    int reduce_loop_unroll, reduce_loop_bcast_step, reduce_loop_load_step;
+    int load_loop_load_step, load_loop_iter_step;
+    int bcast_loop_output_step, bcast_loop_output_substep;
+    int bcast_loop_bcast_step, bcast_loop_bcast_substep;
+    int load_grp_count;
+    conv_1x1_loop_order_t loop_order;
+    bool use_vmovntps;
+    /* sve512 core */
+    bool expl_bcast;
+    int typesize_in;
+    int typesize_out;
+    int typesize_bia;
+    int nthr;
+    int is_oc_scale;
+    data_type_t bia_dt;
+    data_type_t dst_dt;
+    bool signed_input;
+    float wei_adj_scale;
+    // zero-point compensation
+    bool src_zero_point;
+    bool dst_zero_point;
+    bool zp_src_is_common; // common, otherwise (TODO) per-channel
+};
+
+struct jit_1x1_conv_call_s {
+    const void *bcast_data;
+    const void *load_data;
+    const void *output_data;
+    const void *bias_data; // used in forward and backward_weights only
+    const void *scales;
+    const void *compensation;
+    const int32_t *zp_compensation;
+    const int32_t *src_zero_point;
+    const int32_t *dst_zero_point;
+
+    size_t load_dim;
+    size_t bcast_dim;
+    size_t reduce_dim;
+
+    size_t first_last_flag;
 };
 
 struct jit_pool_conf_t {
