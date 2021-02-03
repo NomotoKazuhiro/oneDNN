@@ -66,7 +66,6 @@ struct jit_sve_512_x8s8s32x_fwd_kernel : public jit_generator {
 
 private:
     size_t sve_len_;
-    const int ic_sub_step = 4;
 
     enum {
         typesize = sizeof(float),
