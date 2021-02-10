@@ -1,5 +1,6 @@
 /*******************************************************************************
 * Copyright 2016-2021 Intel Corporation
+* Copyright 2021 FUJITSU LIMITED
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -1152,6 +1153,24 @@ status_t init_conf(conv_gemm_conf_t &jcp,
     bool is_int8_conv = (is_fwd ? utils::one_of(src_d.data_type(), s8, u8)
                                 : utils::one_of(dst_d.data_type(), s8, u8))
             && weights_d.data_type() == s8;
+
+#if DNNL_AARCH64
+    /* ToDo:
+    Both data types of src and weight are s8, oneDNN addds 128 to one of the s8
+    input to make it of type u8 instead, as explained in
+    https://oneapi-src.github.io/oneDNN/dev_guide_int8_computations.html or
+    doc/advanced/int8_computations.md
+    It is because `VPDPBUSD` instruction uses the combination of s8 and u8 as
+    input. At the moment, this file and some other related files, such as
+    `src/cpu/gemm*`, `src/cpu/src/cpu/reorder/` and `tests/benchdnn/conv/`, are
+    implemented with this addition (and its counterpart of subtraction).
+
+    To remove the restriction below for AArch64, we need to remove this addition
+    and subtraction for AArch64.
+    */
+    // For aarch64, int8 conv (signed input data) is not supported.
+    if (is_fwd && src_d.data_type() == s8) return status::unimplemented;
+#endif
 
     auto default_dat_tag = is_int8_conv
             ? utils::pick(ndims - 3, format_tag::nwc, format_tag::nhwc,
