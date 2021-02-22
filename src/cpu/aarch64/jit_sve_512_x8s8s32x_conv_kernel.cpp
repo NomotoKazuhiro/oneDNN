@@ -170,7 +170,13 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
                         Xbyak_aarch64::ptr(reg_addr));
             else
                 ld1w(vmm_comp.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
-
+            if (jcp.is_fast_depthwise) {
+                scvtf(vmm_comp.s, mask_all_one, vmm_comp.s);
+                if (!jcp.with_bias)
+                    eor(zmm_add_data.d, zmm_add_data.d, zmm_add_data.d);
+                xa_->fsub(zmm_add_data.s, zmm_add_data.s,
+                        vmm_comp.s); // vmm_bias - vmm_comp
+            }
             add_flag = true;
         }
         if (jcp.is_fast_depthwise) {
@@ -234,7 +240,6 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
             /* optimization under specific conditions: preload scale_offset data */
             auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
             ld1w(vmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
-
             if (add_flag) {
                 for (int j = 0; j < ur_w; j++)
                     xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, zmm_add_data.s);
