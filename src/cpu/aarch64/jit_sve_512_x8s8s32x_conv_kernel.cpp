@@ -172,15 +172,10 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
             cvt2ps(data_type::s32, vmm_comp, reg_compensation, comp_offset,
                     mask_flag);
         }
-        /* optimization under specific conditions: preload scale_offset data */
-        if (!jcp.is_fast_depthwise && jcp.signed_input) {
-            auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
-            ld1w(vmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
-        }
-        /* add to accum: compensation, bias and permute */
-        for (int j = 0; j < ur_w; j++) {
-            auto vmm = vmm_out(j, k);
-            if (jcp.is_fast_depthwise) {
+        if (jcp.is_fast_depthwise) {
+            /* add to accum: compensation, bias and permute */
+            for (int j = 0; j < ur_w; j++) {
+                auto vmm = vmm_out(j, k);
                 auto zmm = zmm_out(j, k);
                 auto zmm_tmp1 = ZReg(31);
                 auto zmm_tmp2 = ZReg(30);
@@ -206,19 +201,11 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
                 xa_->add(reg_stack, reg_stack, 64);
                 ldr(zmm_tmp1, Xbyak_aarch64::ptr(reg_stack));
                 xa_->add(reg_stack, reg_stack, 64);
-            }
-            scvtf(vmm.s, mask_all_one, vmm.s);
-            if (!jcp.signed_input) xa_->fsub(vmm.s, vmm.s, vmm_comp.s);
-            if (jcp.with_bias) xa_->fadd(vmm.s, vmm.s, vmm_bias.s);
 
-            if (!jcp.is_fast_depthwise && jcp.signed_input) {
-                /* optimization under specific conditions: optimize using preloaded scale_offset data */
-                xa_->fmul(vmm.s, vmm.s, vmm_pre_load.s);
-                if (mask_flag) {
-                    xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
-                    xa_->mov(vmm.s, mask_tmp / Xbyak_aarch64::T_m, 0);
-                }
-            } else {
+                scvtf(vmm.s, mask_all_one, vmm.s);
+                if (!jcp.signed_input) xa_->fsub(vmm.s, vmm.s, vmm_comp.s);
+                if (jcp.with_bias) xa_->fadd(vmm.s, vmm.s, vmm_bias.s);
+
                 auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
                 xa_->sub(reg_stack, reg_stack, 64);
                 str(vmm_tmp, Xbyak_aarch64::ptr(reg_stack));
@@ -230,6 +217,36 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
                     xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
                     xa_->mov(vmm.s, mask_tmp / Xbyak_aarch64::T_m, 0);
                 }
+            }
+        } else {
+            /* optimization under specific conditions: preload scale_offset data */
+            auto zmm_pre_load = vmm_pre_load;
+            if (!jcp.signed_input) {
+                zmm_pre_load = vmm_tmp;
+                xa_->sub(reg_stack, reg_stack, 64);
+                str(zmm_pre_load, Xbyak_aarch64::ptr(reg_stack));
+            }
+            auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
+            ld1w(zmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
+            /* add to accum: compensation, bias and permute */
+            for (int j = 0; j < ur_w; j++) scvtf(vmm_out(j, k).s, mask_all_one, vmm_out(j, k).s);
+            if (!jcp.signed_input) {
+                for (int j = 0; j < ur_w; j++) xa_->fsub(vmm_out(j, k).s, vmm_out(j, k).s, vmm_comp.s);
+            }
+            if (jcp.with_bias) {
+                for (int j = 0; j < ur_w; j++) xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, vmm_bias.s);
+            }
+
+            /* optimization under specific conditions: optimize using preloaded scale_offset data */
+            for (int j = 0; j < ur_w; j++) xa_->fmul(vmm_out(j, k).s, vmm_out(j, k).s, zmm_pre_load.s);
+
+            if (mask_flag) {
+                xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
+                for (int j = 0; j < ur_w; j++) xa_->mov(vmm_out(j, k).s, mask_tmp / Xbyak_aarch64::T_m, 0);
+            }
+            if (!jcp.signed_input) {
+                ldr(zmm_pre_load, Xbyak_aarch64::ptr(reg_stack));
+                xa_->add(reg_stack, reg_stack, 64);
             }
         }
     }
