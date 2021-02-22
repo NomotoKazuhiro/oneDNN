@@ -161,16 +161,22 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
         const bool mask_flag
                 = last_oc_block_flag && k == nb_oc_block - 1 && mask_gflag;
         int scale_offset = jcp.is_oc_scale * (sizeof(float) * k * oc_block);
+        bool add_flag = false;
+        auto zmm_add_data = vmm_bias;
         if (jcp.with_bias) {
             int bias_offset = jcp.typesize_bia * k * oc_block;
 
-            cvt2ps(jcp.bia_dt, vmm_bias, reg_bias, bias_offset, mask_flag);
+            cvt2ps(jcp.bia_dt, zmm_add_data, reg_bias, bias_offset, mask_flag);
+            add_flag = true;
         }
         if (!jcp.signed_input) {
             int comp_offset = sizeof(int32_t) * k * oc_block;
 
             cvt2ps(data_type::s32, vmm_comp, reg_compensation, comp_offset,
                     mask_flag);
+            if (!jcp.with_bias) eor(zmm_add_data.d, zmm_add_data.d, zmm_add_data.d);
+            xa_->fsub(zmm_add_data.s, zmm_add_data.s, vmm_comp.s); // vmm_bias - vmm_comp
+            add_flag = true;
         }
         if (jcp.is_fast_depthwise) {
             /* add to accum: compensation, bias and permute */
@@ -203,8 +209,7 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
                 xa_->add(reg_stack, reg_stack, 64);
 
                 scvtf(vmm.s, mask_all_one, vmm.s);
-                if (!jcp.signed_input) xa_->fsub(vmm.s, vmm.s, vmm_comp.s);
-                if (jcp.with_bias) xa_->fadd(vmm.s, vmm.s, vmm_bias.s);
+                if (add_flag) xa_->fadd(vmm.s, vmm.s, zmm_add_data.s);
 
                 auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
                 xa_->sub(reg_stack, reg_stack, 64);
@@ -220,38 +225,20 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
             }
         } else {
             /* optimization under specific conditions: preload scale_offset data */
-            auto zmm_pre_load = vmm_pre_load;
-            if (!jcp.signed_input) {
-                zmm_pre_load = vmm_tmp;
-                xa_->sub(reg_stack, reg_stack, 64);
-                str(zmm_pre_load, Xbyak_aarch64::ptr(reg_stack));
-            }
             auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
-            ld1w(zmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
+            ld1w(vmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
             /* add to accum: compensation, bias and permute */
-            for (int j = 0; j < ur_w; j++)
-                scvtf(vmm_out(j, k).s, mask_all_one, vmm_out(j, k).s);
-            if (!jcp.signed_input) {
-                for (int j = 0; j < ur_w; j++)
-                    xa_->fsub(vmm_out(j, k).s, vmm_out(j, k).s, vmm_comp.s);
-            }
-            if (jcp.with_bias) {
-                for (int j = 0; j < ur_w; j++)
-                    xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, vmm_bias.s);
+            for (int j = 0; j < ur_w; j++) scvtf(vmm_out(j, k).s, mask_all_one, vmm_out(j, k).s);
+            if (add_flag) {
+                for (int j = 0; j < ur_w; j++) xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, zmm_add_data.s);
             }
 
             /* optimization under specific conditions: optimize using preloaded scale_offset data */
-            for (int j = 0; j < ur_w; j++)
-                xa_->fmul(vmm_out(j, k).s, vmm_out(j, k).s, zmm_pre_load.s);
+            for (int j = 0; j < ur_w; j++) xa_->fmul(vmm_out(j, k).s, vmm_out(j, k).s, vmm_pre_load.s);
 
             if (mask_flag) {
                 xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
-                for (int j = 0; j < ur_w; j++)
-                    xa_->mov(vmm_out(j, k).s, mask_tmp / Xbyak_aarch64::T_m, 0);
-            }
-            if (!jcp.signed_input) {
-                ldr(zmm_pre_load, Xbyak_aarch64::ptr(reg_stack));
-                xa_->add(reg_stack, reg_stack, 64);
+                for (int j = 0; j < ur_w; j++) xa_->mov(vmm_out(j, k).s, mask_tmp / Xbyak_aarch64::T_m, 0);
             }
         }
     }
