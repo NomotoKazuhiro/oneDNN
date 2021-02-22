@@ -96,32 +96,24 @@ void jit_sve_512_x8s8s32x_fwd_kernel::cvt2ps(data_type_t type_in,
                 ld1w(vmm.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
             break;
         case data_type::s8:
-            xa_->sub(reg_stack, reg_stack, 64);
-            str(vmm_tmp, Xbyak_aarch64::ptr(reg_stack));
-            vmm_load_src(vmm_tmp, reg_addr, mask_flag);
-            zip1(vmm_tmp.b, vmm_tmp.b, vmm_tmp.b);
-            zip1(vmm_tmp.h, vmm_tmp.h, vmm_tmp.h);
-            sxtb(vmm.s, mask_all_one / Xbyak_aarch64::T_m, vmm_tmp.s);
+            vmm_load_src(vmm_cvt_tmp, reg_addr, mask_flag);
+            zip1(vmm_cvt_tmp.b, vmm_cvt_tmp.b, vmm_cvt_tmp.b);
+            zip1(vmm_cvt_tmp.h, vmm_cvt_tmp.h, vmm_cvt_tmp.h);
+            sxtb(vmm.s, mask_all_one / Xbyak_aarch64::T_m, vmm_cvt_tmp.s);
             if (mask_flag) {
                 xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
                 xa_->mov(vmm.s, mask_tmp / Xbyak_aarch64::T_m, 0);
             }
-            ldr(vmm_tmp, Xbyak_aarch64::ptr(reg_stack));
-            xa_->add(reg_stack, reg_stack, 64);
             break;
         case data_type::u8:
-            xa_->sub(reg_stack, reg_stack, 64);
-            str(vmm_tmp, Xbyak_aarch64::ptr(reg_stack));
-            vmm_load_src(vmm_tmp, reg_addr, mask_flag);
-            zip1(vmm_tmp.b, vmm_tmp.b, vmm_tmp.b);
-            zip1(vmm_tmp.h, vmm_tmp.h, vmm_tmp.h);
-            uxtb(vmm.s, mask_all_one / Xbyak_aarch64::T_m, vmm_tmp.s);
+            vmm_load_src(vmm_cvt_tmp, reg_addr, mask_flag);
+            zip1(vmm_cvt_tmp.b, vmm_cvt_tmp.b, vmm_cvt_tmp.b);
+            zip1(vmm_cvt_tmp.h, vmm_cvt_tmp.h, vmm_cvt_tmp.h);
+            uxtb(vmm.s, mask_all_one / Xbyak_aarch64::T_m, vmm_cvt_tmp.s);
             if (mask_flag) {
                 xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
                 xa_->mov(vmm.s, mask_tmp / Xbyak_aarch64::T_m, 0);
             }
-            ldr(vmm_tmp, Xbyak_aarch64::ptr(reg_stack));
-            xa_->add(reg_stack, reg_stack, 64);
             break;
         default: assert(!"unsupported data type");
     }
@@ -172,10 +164,13 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
         if (!jcp.signed_input) {
             int comp_offset = sizeof(int32_t) * k * oc_block;
 
-            cvt2ps(data_type::s32, vmm_comp, reg_compensation, comp_offset,
-                    mask_flag);
-            if (!jcp.with_bias) eor(zmm_add_data.d, zmm_add_data.d, zmm_add_data.d);
-            xa_->fsub(zmm_add_data.s, zmm_add_data.s, vmm_comp.s); // vmm_bias - vmm_comp
+            auto reg_addr = get_comp_addr_reg(reg_compensation, comp_offset);
+            if (mask_flag)
+                ld1w(vmm_comp.s, ktail_mask / Xbyak_aarch64::T_z,
+                        Xbyak_aarch64::ptr(reg_addr));
+            else
+                ld1w(vmm_comp.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
+
             add_flag = true;
         }
         if (jcp.is_fast_depthwise) {
@@ -224,21 +219,35 @@ void jit_sve_512_x8s8s32x_fwd_kernel::store_output(
                 }
             }
         } else {
+            /* add to accum: compensation, bias and permute */
+            for (int j = 0; j < ur_w; j++)
+                scvtf(vmm_out(j, k).s, mask_all_one, vmm_out(j, k).s);
+
+            if (!jcp.signed_input) {
+                scvtf(vmm_comp.s, mask_all_one, vmm_comp.s);
+                if (!jcp.with_bias)
+                    eor(zmm_add_data.d, zmm_add_data.d, zmm_add_data.d);
+                xa_->fsub(zmm_add_data.s, zmm_add_data.s,
+                        vmm_comp.s); // vmm_bias - vmm_comp
+            }
+
             /* optimization under specific conditions: preload scale_offset data */
             auto reg_addr = get_comp_addr_reg(reg_ptr_scales, scale_offset);
             ld1w(vmm_pre_load.s, mask_all_one, Xbyak_aarch64::ptr(reg_addr));
-            /* add to accum: compensation, bias and permute */
-            for (int j = 0; j < ur_w; j++) scvtf(vmm_out(j, k).s, mask_all_one, vmm_out(j, k).s);
+
             if (add_flag) {
-                for (int j = 0; j < ur_w; j++) xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, zmm_add_data.s);
+                for (int j = 0; j < ur_w; j++)
+                    xa_->fadd(vmm_out(j, k).s, vmm_out(j, k).s, zmm_add_data.s);
             }
 
             /* optimization under specific conditions: optimize using preloaded scale_offset data */
-            for (int j = 0; j < ur_w; j++) xa_->fmul(vmm_out(j, k).s, vmm_out(j, k).s, vmm_pre_load.s);
+            for (int j = 0; j < ur_w; j++)
+                xa_->fmul(vmm_out(j, k).s, vmm_out(j, k).s, vmm_pre_load.s);
 
             if (mask_flag) {
                 xa_->not_(mask_tmp.b, mask_all_one.b, ktail_mask.b);
-                for (int j = 0; j < ur_w; j++) xa_->mov(vmm_out(j, k).s, mask_tmp / Xbyak_aarch64::T_m, 0);
+                for (int j = 0; j < ur_w; j++)
+                    xa_->mov(vmm_out(j, k).s, mask_tmp / Xbyak_aarch64::T_m, 0);
             }
         }
     }
