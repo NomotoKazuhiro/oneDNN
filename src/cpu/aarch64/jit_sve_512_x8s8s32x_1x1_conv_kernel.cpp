@@ -641,8 +641,8 @@ void _jit_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                 i_reduce += reduce_step) {
             for (int i_load = 0; i_load < load_loop_blk; ++i_load)
                 load_ptr(vreg_load(i_load), i_reduce, i_load);
-            for (int i_ur = 0; i_ur < ur; ++i_ur) {
-                if (jcp.signed_input) {
+            if (jcp.signed_input) {
+                for (int i_ur = 0; i_ur < ur; ++i_ur) {
                     if (last_block && ic_tail_size != 0
                             && i_reduce == loop_unroll - reduce_step) {
                         auto xmm_bcast = VReg16B(vmm_bcast.getIdx());
@@ -682,9 +682,24 @@ void _jit_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                         compute(vreg_accum(i_load, i_ur), vreg_load(i_load),
                                 _bcast);
                     }
-                } else {
-                    if (last_block && ic_tail_size != 0
-                            && i_reduce == loop_unroll - reduce_step) {
+                }
+            } else {
+                bool is_opt = false;
+                switch (ur) {
+                    case 6:
+                        is_opt = vreg_load(load_loop_blk - 1).getIdx() <= 27;
+                        break;
+                    case 7:
+                        is_opt = vreg_load(load_loop_blk - 1).getIdx() <= 23;
+                        break;
+                    case 8:
+                        is_opt = vreg_load(load_loop_blk - 1).getIdx() <= 26;
+                        break;
+                    default: is_opt = false; break;
+                }
+                if (last_block && ic_tail_size != 0
+                        && i_reduce == loop_unroll - reduce_step) {
+                    for (int i_ur = 0; i_ur < ur; ++i_ur) {
                         auto xmm_bcast = VReg16B(vmm_bcast.getIdx());
                         for (int r = 0; r < ic_tail_size; ++r) {
                             add_imm(reg_tmp0_adr, aux_reg_bcast_data,
@@ -698,13 +713,86 @@ void _jit_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                         }
                         dup(ZRegS(vmm_bcast.getIdx()),
                                 ZRegS(xmm_bcast.getIdx())[0]);
-                    } else {
-                        bcast_ptr(vmm_bcast, i_reduce, i_ur, false);
+                        xa_->add(vmm_bcast.b, vmm_bcast.b, vmm_shift.b);
+                        for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
+                            compute(vreg_accum(i_load, i_ur), vreg_load(i_load),
+                                    vmm_bcast);
+                        }
                     }
-                    xa_->add(vmm_bcast.b, vmm_bcast.b, vmm_shift.b);
-                    for (int i_load = 0; i_load < load_loop_blk; ++i_load) {
-                        compute(vreg_accum(i_load, i_ur), vreg_load(i_load),
-                                vmm_bcast);
+                } else {
+                    if (is_opt) {
+                        int reg_idx = vreg_load(load_loop_blk - 1).getIdx();
+                        if (ur == 7) {
+                            for (int i_ur = 0; i_ur < ur; ++i_ur) {
+                                auto zmm_bcast = (i_ur == 0)
+                                        ? vmm_bcast
+                                        : ZReg(reg_idx + i_ur);
+                                bcast_ptr(zmm_bcast, i_reduce, i_ur, false);
+                            }
+                            for (int i_ur = 0; i_ur < ur; ++i_ur) {
+                                auto zmm_bcast = (i_ur == 0)
+                                        ? vmm_bcast
+                                        : ZReg(reg_idx + i_ur);
+                                xa_->add(zmm_bcast.b, zmm_bcast.b, vmm_shift.b);
+                            }
+                            for (int i_ur = 0; i_ur < ur; ++i_ur) {
+                                auto zmm_bcast = (i_ur == 0)
+                                        ? vmm_bcast
+                                        : ZReg(reg_idx + i_ur);
+                                for (int i_load = 0; i_load < load_loop_blk;
+                                        ++i_load) {
+                                    compute(vreg_accum(i_load, i_ur),
+                                            vreg_load(i_load), zmm_bcast);
+                                }
+                            }
+                        } else {
+                            int div_num = 2;
+                            for (int a = 0; a < div_num; a++) {
+                                if (a == 0) {
+                                    for (int i_ur = 0; i_ur < ur / 2; ++i_ur) {
+                                        auto zmm_bcast = (i_ur == 0)
+                                                ? vmm_bcast
+                                                : ZReg(reg_idx + i_ur);
+                                        bcast_ptr(zmm_bcast, i_reduce,
+                                                a * ur / 2 + i_ur, false);
+                                    }
+                                    for (int i_ur = 0; i_ur < ur / 2; ++i_ur) {
+                                        auto zmm_bcast = (i_ur == 0)
+                                                ? vmm_bcast
+                                                : ZReg(reg_idx + i_ur);
+                                        xa_->add(zmm_bcast.b, zmm_bcast.b,
+                                                vmm_shift.b);
+                                    }
+                                }
+                                for (int i_ur = 0; i_ur < ur / 2; ++i_ur) {
+                                    auto zmm_bcast = (i_ur == 0)
+                                            ? vmm_bcast
+                                            : ZReg(reg_idx + i_ur);
+                                    for (int i_load = 0; i_load < load_loop_blk;
+                                            ++i_load) {
+                                        compute(vreg_accum(i_load,
+                                                        a * ur / 2 + i_ur),
+                                                vreg_load(i_load), zmm_bcast);
+                                    }
+                                    if (a < div_num - 1) {
+                                        bcast_ptr(zmm_bcast, i_reduce,
+                                                (a + 1) * ur / 2 + i_ur, false);
+                                        xa_->add(zmm_bcast.b, zmm_bcast.b,
+                                                vmm_shift.b);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for (int i_ur = 0; i_ur < ur; ++i_ur) {
+                            bcast_ptr(vmm_bcast, i_reduce, i_ur, false);
+                            xa_->add(vmm_bcast.b, vmm_bcast.b, vmm_shift.b);
+                            for (int i_load = 0; i_load < load_loop_blk;
+                                    ++i_load) {
+                                compute(vreg_accum(i_load, i_ur),
+                                        vreg_load(i_load), vmm_bcast);
+                            }
+                        }
                     }
                 }
             }
