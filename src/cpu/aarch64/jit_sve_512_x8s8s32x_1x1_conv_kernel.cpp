@@ -756,18 +756,13 @@ void _jit_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                                         bcast_ptr(zmm_bcast, i_reduce,
                                                 a * ur / 2 + i_ur, false);
                                     }
-                                    for (int i_ur = 0; i_ur < ur / 2; ++i_ur) {
-                                        auto zmm_bcast = (i_ur == 0)
-                                                ? vmm_bcast
-                                                : ZReg(reg_idx + i_ur);
-                                        xa_->add(zmm_bcast.b, zmm_bcast.b,
-                                                vmm_shift.b);
-                                    }
                                 }
                                 for (int i_ur = 0; i_ur < ur / 2; ++i_ur) {
                                     auto zmm_bcast = (i_ur == 0)
                                             ? vmm_bcast
                                             : ZReg(reg_idx + i_ur);
+                                    xa_->add(zmm_bcast.b, zmm_bcast.b,
+                                            vmm_shift.b);
                                     for (int i_load = 0; i_load < load_loop_blk;
                                             ++i_load) {
                                         compute(vreg_accum(i_load,
@@ -777,8 +772,6 @@ void _jit_sve_512_x8s8s32x_1x1_conv_kernel<Vmm>::reduce_loop(
                                     if (a < div_num - 1) {
                                         bcast_ptr(zmm_bcast, i_reduce,
                                                 (a + 1) * ur / 2 + i_ur, false);
-                                        xa_->add(zmm_bcast.b, zmm_bcast.b,
-                                                vmm_shift.b);
                                     }
                                 }
                             }
