@@ -193,6 +193,7 @@ private:
             const injector_utils::vmm_index_set_iterator_t start_idx_it);
     void injector_postamble();
     void assign_regs();
+    void set_coef_to_regs();
     void compute_cmp_mask(
             const TRegS &vmm_src, const TRegS &vmm_cmpare, int cmp_predicate);
     void blend_with_mask(const TRegS &vmm_dst, const TRegS &src);
@@ -291,7 +292,7 @@ private:
         return te.off + key_off_val_shift * scale;
     }
 
-    TRegS table_val(key_t key, size_t key_off_val_shift = 0) {
+    TRegS table_val(key_t key, TRegS zreg, size_t key_off_val_shift = 0) {
         Xbyak_aarch64::XReg x_addr(h->X_DEFAULT_ADDR);
         auto off = table_off(key, key_off_val_shift);
 
@@ -301,8 +302,8 @@ private:
             x_addr = x_table;
         }
 
-        h->ldr(TReg(z_tmp.getIdx()), ptr(x_addr));
-        return z_tmp;
+        h->ldr(TReg(zreg.getIdx()), ptr(x_addr));
+        return zreg;
     }
 
     // we accept only 32bit hexadecimal table values to avoid any rounding
