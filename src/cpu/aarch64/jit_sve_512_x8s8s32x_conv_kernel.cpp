@@ -740,6 +740,10 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
             }
         }
     } else {
+        int ki_offset = kernel_offset(0, 0, 1) - kernel_offset(0, 0, 0);
+        int a_offset = kernel_offset(0, 1, 0) - kernel_offset(0, 0, 0);
+        int ii_offset = kernel_offset(1, 0, 0) - kernel_offset(0, 0, 0);
+        int offset = 0;
         for (int ki = 0; ki < kw; ki++) {
             int jj_start = get_ow_start(ki, pad_l);
             int jj_end = get_ow_end(ur_w, ki, pad_r);
@@ -753,6 +757,13 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
             bool is_opt2 = (nb_oc_block == 2) && (icb % 2 == 0)
                     && (vmm_inp(_end, nb_oc_block + 1).getIdx() <= 28);
             if (is_opt2) {
+                auto reg_addr1 = x16;
+                auto reg_addr2 = x17;
+                auto reg_offset = XReg(reg_tmp3_imm.getIdx() + 1);
+                if (ki == 0) {
+                    add_imm(reg_addr2, aux_reg_ker, ii_offset, reg_tmp0_imm);
+                    xa_->mov_imm(reg_offset, a_offset);
+                }
                 for (int ic = 0; ic < icb / 2; ic++) {
                     for (int a = 0; a < 2; a++) {
                         for (int jj = _start; jj < _end; jj++) {
@@ -766,12 +777,29 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                                             vmm_inp(jj, nb_oc_block + a)
                                                     .getIdx());
                                     for (int r = 0; r < ic_tail_size; ++r) {
+#if 0 // Address calculation change_3
                                         add_imm(reg_tmp0_adr, aux_reg_inp,
                                                 (aux_input_offset + r),
                                                 reg_tmp0_imm);
                                         ldrb(WReg(reg_tmp1_imm.getIdx()),
                                                 Xbyak_aarch64::ptr(
                                                         reg_tmp0_adr));
+#else
+                                        if ((aux_input_offset + r) < 4096) {
+                                            ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                                    Xbyak_aarch64::ptr(
+                                                            aux_reg_inp,
+                                                            (aux_input_offset
+                                                                    + r)));
+                                        } else {
+                                            add_imm(reg_tmp0_adr, aux_reg_inp,
+                                                    (aux_input_offset + r),
+                                                    reg_tmp0_imm);
+                                            ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                                    Xbyak_aarch64::ptr(
+                                                            reg_tmp0_adr));
+                                        }
+#endif
                                         ins(VReg16B(xmm_tmp.getIdx())[r],
                                                 WReg(reg_tmp1_imm.getIdx()));
                                     }
@@ -831,16 +859,27 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                     }
                     for (int a = 0; a < 2; a++) {
                         for (int ii = 0; ii < nb_oc_block; ii++) {
-                            int aux_kernel_offset
-                                    = kernel_offset(ii, ic * 2 + a, ki);
-                            auto reg_addr = get_comp_addr_reg(
-                                    aux_reg_ker, aux_kernel_offset);
+                            auto reg_addr = (ii == 0) ? reg_addr1 : reg_addr2;
                             auto _vmm_wei
                                     = ((a == 1) && (ii == nb_oc_block - 1))
                                     ? vmm_wei
                                     : vmm_inp(2 * a + ii, nb_oc_block + 2);
-                            ld1w(_vmm_wei.s, mask_all_one,
-                                    Xbyak_aarch64::ptr(reg_addr));
+                            if ((ki == 0) && (ic == 0) && (a == 0)
+                                    && (ii == 0)) {
+                                ld1w(_vmm_wei.s, mask_all_one,
+                                        Xbyak_aarch64::ptr(aux_reg_ker));
+                                if (!(((ki + 1) == kw) && ((ic + 1) == icb / 2)
+                                            && ((a + 1) == 2)
+                                            && ((ii + 1) == nb_oc_block)))
+                                    xa_->add(reg_addr, aux_reg_ker, reg_offset);
+                            } else {
+                                ld1w(_vmm_wei.s, mask_all_one,
+                                        Xbyak_aarch64::ptr(reg_addr));
+                                if (!(((ki + 1) == kw) && ((ic + 1) == icb / 2)
+                                            && ((a + 1) == 2)
+                                            && ((ii + 1) == nb_oc_block)))
+                                    xa_->add(reg_addr, reg_addr, reg_offset);
+                            }
                         }
                     }
                     for (int a = 0; a < 2; a++) {
@@ -865,6 +904,11 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                     }
                 }
             } else {
+                bool is_opt = vmm_inp(_start, nb_oc_block).getIdx() >= 24
+                        && vmm_inp(_end - 1, nb_oc_block).getIdx() <= 29;
+                auto reg_addr1 = x16;
+                auto reg_offset = x17;
+                if ((is_opt) && (ki == 0)) xa_->mov_imm(reg_offset, ii_offset);
                 for (int ic = 0; ic < icb; ic++) {
                     for (int jj = _start; jj < _end; jj++) {
                         int aux_input_offset = input_offset(jj, ic, ki);
@@ -874,11 +918,27 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                                 auto xmm_tmp = VReg16B(
                                         vmm_inp(jj, nb_oc_block).getIdx());
                                 for (int r = 0; r < ic_tail_size; ++r) {
+#if 0 // Address calculation change_3
                                     add_imm(reg_tmp0_adr, aux_reg_inp,
                                             (aux_input_offset + r),
                                             reg_tmp0_imm);
                                     ldrb(WReg(reg_tmp1_imm.getIdx()),
                                             Xbyak_aarch64::ptr(reg_tmp0_adr));
+#else
+                                    if ((aux_input_offset + r) < 4096) {
+                                        ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                                Xbyak_aarch64::ptr(aux_reg_inp,
+                                                        (aux_input_offset
+                                                                + r)));
+                                    } else {
+                                        add_imm(reg_tmp0_adr, aux_reg_inp,
+                                                (aux_input_offset + r),
+                                                reg_tmp0_imm);
+                                        ldrb(WReg(reg_tmp1_imm.getIdx()),
+                                                Xbyak_aarch64::ptr(
+                                                        reg_tmp0_adr));
+                                    }
+#endif
                                     ins(VReg16B(xmm_tmp.getIdx())[r],
                                             WReg(reg_tmp1_imm.getIdx()));
                                 }
@@ -926,20 +986,29 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                             xa_->add(vmm_inp(jj, nb_oc_block).b,
                                     vmm_inp(jj, nb_oc_block).b, vmm_shift.b);
                     }
-                    bool is_opt = vmm_inp(_start, nb_oc_block).getIdx() >= 24
-                            && vmm_inp(_end - 1, nb_oc_block).getIdx() <= 29;
                     if (is_opt) {
                         for (int a = 0; a < nb_oc_block / 2; a++) {
                             for (int ii = 0; ii < 2; ii++) {
                                 int _ii = a * 2 + ii;
-                                int aux_kernel_offset
-                                        = kernel_offset(_ii, ic, ki);
-                                auto reg_addr = get_comp_addr_reg(
-                                        aux_reg_ker, aux_kernel_offset);
+                                auto reg_addr = reg_addr1;
                                 auto _vmm_wei = ((_ii % 2) == 0) ? vmm_wei
                                                                  : vmm_shift;
-                                ld1w(_vmm_wei.s, mask_all_one,
-                                        Xbyak_aarch64::ptr(reg_addr));
+                                if ((ki == 0) && (ic == 0) && (a == 0)
+                                        && (ii == 0)) {
+                                    ld1w(_vmm_wei.s, mask_all_one,
+                                            Xbyak_aarch64::ptr(aux_reg_ker));
+                                    if (!(((a + 1) == nb_oc_block / 2)
+                                                && ((ii + 1) == 2)))
+                                        xa_->add(reg_addr, aux_reg_ker,
+                                                reg_offset);
+                                } else {
+                                    ld1w(_vmm_wei.s, mask_all_one,
+                                            Xbyak_aarch64::ptr(reg_addr));
+                                    if (!(((a + 1) == nb_oc_block / 2)
+                                                && ((ii + 1) == 2)))
+                                        xa_->add(
+                                                reg_addr, reg_addr, reg_offset);
+                                }
                             }
                             for (int ii = 0; ii < 2; ii++) {
                                 int _ii = a * 2 + ii;
@@ -951,6 +1020,14 @@ void jit_sve_512_x8s8s32x_fwd_kernel::compute_ker(int ur_w, int pad_l,
                                     compute(vmm_out(jj, _ii), _vmm_wei, inp);
                                 }
                             }
+                        }
+                        if (!(((ki + 1) == kw) && ((ic + 1) == icb))) {
+                            if ((ic + 1) < icb)
+                                offset += a_offset;
+                            else
+                                offset = ki_offset * (ki + 1);
+                            add_imm(reg_addr1, aux_reg_ker, offset,
+                                    reg_tmp2_imm);
                         }
                         if (!jcp.signed_input) {
                             if (jcp.is_depthwise && !jcp.is_fast_depthwise) {
